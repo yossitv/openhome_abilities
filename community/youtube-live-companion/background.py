@@ -60,8 +60,12 @@ DEFAULT_CONFIG = {
 
 SUMMARY_SYSTEM_PROMPT = """You are a Japanese live-stream cohost assistant.
 
-Summarize recent live chat for the streamer to say aloud.
+Speak to the streamer as an assistant, not as the streamer.
+Summarize recent live chat so the streamer can quickly understand what is happening.
+Use the live title and description as context, and prefer suggestions that fit the stream topic.
 Do not read every comment. Capture the main trend, questions, mood, and useful cue.
+Use phrases like "コメントでは", "今は", "この話題に触れるとよさそうです".
+Do not say lines that pretend to be the streamer, such as "僕は", "私は", "みんな", or direct audience greetings.
 Return only Japanese speech text. No markdown, no labels.
 Keep it natural and concise: 2 or 3 short sentences.
 Do not invent viewer counts, usernames, facts, sponsors, or promises.
@@ -69,7 +73,11 @@ Do not invent viewer counts, usernames, facts, sponsors, or promises.
 
 QUIET_SYSTEM_PROMPT = """You are a Japanese live-stream cohost assistant.
 
-The live chat has been quiet. Create a warm, low-pressure topic starter that the streamer can say aloud.
+Speak to the streamer as an assistant, not as the streamer.
+The live chat has been quiet. Suggest a warm, low-pressure topic the streamer could bring up.
+Use the live title and description as context, and avoid generic topics that ignore the stream topic.
+Use assistant-style guidance like "少し静かなので", "この話題を振ると反応しやすそうです".
+Do not produce a first-person line for the streamer to say directly.
 Return only Japanese speech text. No markdown, no labels.
 Keep it to 1 or 2 short sentences.
 Do not invent viewer counts, usernames, facts, sponsors, or promises.
@@ -85,6 +93,7 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
     _access_token_expires_at = 0
     _live_chat_id = ""
     _live_title = ""
+    _live_description = ""
     _next_page_token = ""
     _chat_initialized = False
     _last_message_at = 0
@@ -92,6 +101,7 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
     _last_quiet_prompt_at = 0
     _next_sleep_seconds = 15
     _message_buffer = None
+    _recent_messages = None
     _seen_message_ids = None
     _announced_connection = False
     _logged_missing_config = False
@@ -100,6 +110,7 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
 
     async def watch_live_chat(self):
         self._message_buffer = []
+        self._recent_messages = []
         self._seen_message_ids = []
         self.worker.editor_logging_handler.info("YouTube live companion watcher started")
 
@@ -138,6 +149,9 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
                         "credential_source": config.get("credential_source"),
                         "live_chat_id": "",
                         "live_title": "",
+                        "live_description": "",
+                        "recent_messages": [],
+                        "recent_messages_count": 0,
                         "last_error": None,
                         "updated_at_epoch": round(time.time()),
                     }
@@ -146,6 +160,8 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
 
             self._live_chat_id = live["live_chat_id"]
             self._live_title = live.get("live_title") or "YouTube Live"
+            self._live_description = live.get("live_description") or ""
+            self._recent_messages = []
             self._chat_initialized = False
             self._next_page_token = ""
             self._last_message_at = time.time()
@@ -157,6 +173,9 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
                     "credential_source": config.get("credential_source"),
                     "live_chat_id": self._live_chat_id,
                     "live_title": self._live_title,
+                    "live_description": self._truncate_text(self._live_description, 500),
+                    "recent_messages": [],
+                    "recent_messages_count": 0,
                     "last_error": None,
                     "updated_at_epoch": round(time.time()),
                 }
@@ -187,6 +206,8 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
         if new_messages:
             self._last_message_at = time.time()
             self._message_buffer.extend(new_messages)
+            self._recent_messages.extend(new_messages)
+            self._recent_messages = self._recent_messages[-20:]
 
         await self._maybe_summarize(config)
         await self._maybe_prompt_when_quiet(config)
@@ -198,7 +219,10 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
                 "credential_source": config.get("credential_source"),
                 "live_chat_id": self._live_chat_id,
                 "live_title": self._live_title,
+                "live_description": self._truncate_text(self._live_description, 500),
                 "buffered_messages": len(self._message_buffer),
+                "recent_messages": self._messages_for_state(config),
+                "recent_messages_count": len(self._recent_messages),
                 "last_message_at_epoch": round(self._last_message_at),
                 "next_sleep_seconds": self._next_sleep_seconds,
                 "last_error": None,
@@ -219,7 +243,11 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
         prompt_lines = [
             f"- {message['author']}: {message['text']}" for message in messages
         ]
-        prompt = "Recent YouTube live chat messages:\n" + "\n".join(prompt_lines)
+        prompt = (
+            self._live_context_prompt()
+            + "\n\nRecent YouTube live chat messages:\n"
+            + "\n".join(prompt_lines)
+        )
         response = self.capability_worker.text_to_text_response(
             prompt,
             [],
@@ -243,7 +271,8 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
             return
 
         prompt = (
-            f"Live title: {self._live_title}\n"
+            self._live_context_prompt()
+            + "\n"
             f"No new chat messages for about {round(now - self._last_message_at)} seconds."
         )
         response = self.capability_worker.text_to_text_response(
@@ -415,6 +444,7 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
             return {
                 "live_chat_id": config["live_chat_id"],
                 "live_title": config.get("live_title") or "YouTube Live",
+                "live_description": config.get("live_description") or "",
             }
 
         if config.get("video_id"):
@@ -459,6 +489,7 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
                 live = {
                     "live_chat_id": live_chat_id,
                     "live_title": snippet.get("title") or "YouTube Live",
+                    "live_description": snippet.get("description") or "",
                 }
                 if status.get("lifeCycleStatus") == "live":
                     return live
@@ -502,6 +533,7 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
                 return {
                     "live_chat_id": live_chat_id,
                     "live_title": snippet.get("title") or "YouTube Live",
+                    "live_description": snippet.get("description") or "",
                 }
         return None
 
@@ -616,6 +648,30 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
             and config.get("client_secret")
             and config.get("refresh_token")
         )
+
+    def _live_context_prompt(self):
+        description = self._truncate_text(self._live_description, 1200)
+        if not description:
+            description = "No live description is available."
+        return f"Live title: {self._live_title}\nLive description:\n{description}"
+
+    def _truncate_text(self, text, max_length):
+        text = " ".join((text or "").split())
+        if len(text) <= max_length:
+            return text
+        return text[: max_length - 1].rstrip() + "…"
+
+    def _messages_for_state(self, config):
+        limit = int(config.get("max_messages_per_summary", 12))
+        messages = self._recent_messages[-limit:]
+        return [
+            {
+                "author": self._truncate_text(message.get("author") or "viewer", 80),
+                "text": self._truncate_text(message.get("text") or "", 300),
+            }
+            for message in messages
+            if (message.get("text") or "").strip()
+        ]
 
     def _clean_response(self, response):
         if not response:
