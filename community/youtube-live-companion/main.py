@@ -1,29 +1,32 @@
 import json
+import os
 import time
+
+import config as ability_config
 
 from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
 from src.main import AgentWorker
 
 
-CONFIG_FILE = "youtube_live_companion_config.json"
 STATE_FILE = "youtube_live_companion_state.json"
-ENV_FILES = (
-    "youtube_live_companion.env",
-    ".env",
+
+# YouTube OAuth is not currently integrated with OpenHome Linked Accounts.
+# This community version uses manual credentials in config.py as a temporary
+# workaround. OS environment variables with the same names override config.py.
+# Do not commit real API keys, client secrets, or refresh tokens.
+CREDENTIAL_NAMES = (
+    ("YOUTUBE_CLIENT_ID", "client_id"),
+    ("YOUTUBE_CLIENT_SECRET", "client_secret"),
+    ("YOUTUBE_REFRESH_TOKEN", "refresh_token"),
+    ("YOUTUBE_API_KEY", "api_key"),
 )
 
-REQUIRED_API_KEYS = (
-    "youtube_client_id",
-    "youtube_client_secret",
-    "youtube_refresh_token",
+REQUIRED_OAUTH_ENV_NAMES = (
+    "YOUTUBE_CLIENT_ID",
+    "YOUTUBE_CLIENT_SECRET",
+    "YOUTUBE_REFRESH_TOKEN",
 )
-
-CREDENTIAL_ALIASES = {
-    "youtube_client_id": ("youtube_client_id", "client_id"),
-    "youtube_client_secret": ("youtube_client_secret", "client_secret"),
-    "youtube_refresh_token": ("youtube_refresh_token", "refresh_token"),
-}
 
 SETUP_WORDS = {
     "youtube live setup",
@@ -66,20 +69,6 @@ RESET_WORDS = {
     "reset",
 }
 
-SUMMARY_SYSTEM_PROMPT = """You are a Japanese live-stream cohost assistant.
-
-Speak to the streamer as an assistant, not as the streamer.
-Summarize recent live chat so the streamer can quickly understand what is happening.
-Use the live title and description as context, and prefer suggestions that fit the stream topic.
-Do not read every comment. Capture the main trend, questions, mood, and useful cue.
-Use phrases like "コメントでは", "今は", "この話題に触れるとよさそうです".
-Do not say lines that pretend to be the streamer, such as "僕は", "私は", "みんな", or direct audience greetings.
-Return only Japanese speech text. No markdown, no labels.
-Keep it natural and concise: 2 or 3 short sentences.
-Do not invent viewer counts, usernames, facts, sponsors, or promises.
-"""
-
-
 class YoutubeLiveCompanionCapability(MatchingCapability):
     worker: AgentWorker = None
     capability_worker: CapabilityWorker = None
@@ -119,7 +108,9 @@ class YoutubeLiveCompanionCapability(MatchingCapability):
             return
 
         await self.capability_worker.speak(
-            f"YouTube の認証情報がまだ足りません。不足しているキーは {', '.join(missing_keys)} です。OpenHome Dashboard の Third Party API Keys か、Live Editor の youtube_live_companion_config.json に設定してください。"
+            ability_config.MISSING_CREDENTIALS_SPEECH_TEMPLATE.format(
+                missing_keys=", ".join(missing_keys)
+            )
         )
 
     async def _speak_status(self):
@@ -206,7 +197,7 @@ class YoutubeLiveCompanionCapability(MatchingCapability):
         response = self.capability_worker.text_to_text_response(
             prompt,
             [],
-            system_prompt=SUMMARY_SYSTEM_PROMPT,
+            system_prompt=ability_config.SUMMARY_SYSTEM_PROMPT,
         )
         response = self._clean_response(response)
         if response:
@@ -219,18 +210,18 @@ class YoutubeLiveCompanionCapability(MatchingCapability):
 
     async def _reset_config(self):
         removed = False
-        for filename in (CONFIG_FILE, STATE_FILE):
+        for filename in (STATE_FILE,):
             if await self.capability_worker.check_if_file_exists(filename, False):
                 await self.capability_worker.delete_file(filename, False)
                 removed = True
 
         if removed:
             await self.capability_worker.speak(
-                "YouTube 配信アシスタントの設定と状態を削除しました。"
+                "YouTube 配信アシスタントの状態を削除しました。"
             )
         else:
             await self.capability_worker.speak(
-                "削除する永続設定はありませんでした。Live Editor 内の設定ファイルは手動で編集してください。"
+                "削除する永続状態はありませんでした。config.py の設定は手動で編集してください。"
             )
 
     def _normalize(self, text):
@@ -249,96 +240,47 @@ class YoutubeLiveCompanionCapability(MatchingCapability):
             return None
 
     async def _missing_credentials(self):
-        file_values, file_source = await self._read_file_credentials()
-        if all(file_values.get(key_name) for key_name in REQUIRED_API_KEYS):
-            return [], file_source or "ability file"
+        credential_values, credential_source = self._read_manual_credentials()
+        if all(credential_values.get(env_name) for env_name in REQUIRED_OAUTH_ENV_NAMES):
+            return [], credential_source or "config.py"
 
         missing = []
-        third_party_values = {}
-        for key_name in REQUIRED_API_KEYS:
-            third_party_value = self._get_api_key(key_name)
-            if third_party_value:
-                third_party_values[key_name] = third_party_value
+        for env_name in REQUIRED_OAUTH_ENV_NAMES:
+            if credential_values.get(env_name):
                 continue
-            missing.append(key_name)
+            missing.append(env_name)
 
         if missing:
             return missing, "未設定"
 
-        if all(third_party_values.get(key_name) for key_name in REQUIRED_API_KEYS):
-            return [], "Third Party API Keys"
+        return [], credential_source or "config.py"
 
-        return [], file_source or "ability file"
-
-    async def _read_file_credentials(self):
+    def _read_manual_credentials(self):
         values = {}
         sources = []
-        for config_file, is_static in (
-            (CONFIG_FILE, True),
-            (CONFIG_FILE, False),
-        ):
-            if await self.capability_worker.check_if_file_exists(config_file, is_static):
-                text = await self.capability_worker.read_file(config_file, is_static)
-                parsed = self._parse_json_credentials(text)
-                if parsed:
-                    values.update(parsed)
-                    sources.append(config_file)
+        for env_name, _config_key in CREDENTIAL_NAMES:
+            value = self._read_credential(env_name)
+            if value:
+                values[env_name] = value
+                sources.append(self._credential_source_label(env_name))
+        return values, ", ".join(dict.fromkeys(sources))
 
-        for env_file in ENV_FILES:
-            if await self.capability_worker.check_if_file_exists(env_file, True):
-                text = await self.capability_worker.read_file(env_file, True)
-                parsed = self._normalize_credentials(self._parse_env(text))
-                if parsed:
-                    values.update(parsed)
-                    sources.append(env_file)
-            if await self.capability_worker.check_if_file_exists(env_file, False):
-                text = await self.capability_worker.read_file(env_file, False)
-                parsed = self._normalize_credentials(self._parse_env(text))
-                if parsed:
-                    values.update(parsed)
-                    sources.append(env_file)
-        return values, ", ".join(sources)
+    def _read_credential(self, env_name):
+        value = self._clean_credential_value(os.getenv(env_name))
+        if value:
+            return value
+        return self._clean_credential_value(getattr(ability_config, env_name, ""))
 
-    def _get_api_key(self, key_name):
-        try:
-            return self.capability_worker.get_api_keys(key_name)
-        except Exception as error:
-            self.worker.editor_logging_handler.info(
-                f"OpenHome API key {key_name} is unavailable: {error}"
-            )
-            return None
+    def _credential_source_label(self, env_name):
+        if self._clean_credential_value(os.getenv(env_name)):
+            return env_name
+        return "config.py"
 
-    def _parse_env(self, text):
-        values = {}
-        for raw_line in (text or "").splitlines():
-            line = raw_line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            key = key.strip()
-            value = value.strip().strip('"').strip("'")
-            if key:
-                values[key] = value
-        return values
-
-    def _parse_json_credentials(self, text):
-        try:
-            values = json.loads(text or "{}")
-        except (TypeError, ValueError):
-            return {}
-        if not isinstance(values, dict):
-            return {}
-        return self._normalize_credentials(values)
-
-    def _normalize_credentials(self, values):
-        normalized = {}
-        for output_key, aliases in CREDENTIAL_ALIASES.items():
-            for alias in aliases:
-                value = values.get(alias)
-                if value:
-                    normalized[output_key] = str(value).strip()
-                    break
-        return {key: value for key, value in normalized.items() if value}
+    def _clean_credential_value(self, value):
+        value = str(value or "").strip()
+        if value in ability_config.PLACEHOLDER_VALUES:
+            return ""
+        return value
 
     def _matches(self, text, words):
         lowered = text.lower().strip(" 　。、,.!?！？")

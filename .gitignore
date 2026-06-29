@@ -1,0 +1,10 @@
+.env
+**/.env
+youtube_live_companion.env
+**/youtube_live_companion.env
+credentials.json
+**/credentials.json
+token.json
+**/token.json
+*.secret
+**/*.secret

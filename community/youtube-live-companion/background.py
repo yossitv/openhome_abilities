@@ -1,49 +1,27 @@
 import json
+import os
 import time
 
 import requests
+import config as ability_config
 
 from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
 from src.main import AgentWorker
 
 
-CONFIG_FILE = "youtube_live_companion_config.json"
 STATE_FILE = "youtube_live_companion_state.json"
-ENV_FILES = (
-    "youtube_live_companion.env",
-    ".env",
-)
 
-THIRD_PARTY_API_KEY_NAMES = {
-    "client_id": "youtube_client_id",
-    "client_secret": "youtube_client_secret",
-    "refresh_token": "youtube_refresh_token",
+# YouTube OAuth is not currently integrated with OpenHome Linked Accounts.
+# This community version uses manual credentials in config.py as a temporary
+# workaround. OS environment variables with the same names override config.py.
+# Do not commit real API keys, client secrets, or refresh tokens.
+CREDENTIAL_NAMES = {
+    "client_id": "YOUTUBE_CLIENT_ID",
+    "client_secret": "YOUTUBE_CLIENT_SECRET",
+    "refresh_token": "YOUTUBE_REFRESH_TOKEN",
+    "api_key": "YOUTUBE_API_KEY",
 }
-
-FILE_CREDENTIAL_NAMES = {
-    **THIRD_PARTY_API_KEY_NAMES,
-    "api_key": "youtube_api_key",
-}
-
-CONFIG_CREDENTIAL_ALIASES = {
-    "client_id": ("client_id", "youtube_client_id"),
-    "client_secret": ("client_secret", "youtube_client_secret"),
-    "refresh_token": ("refresh_token", "youtube_refresh_token"),
-    "api_key": ("api_key", "youtube_api_key"),
-}
-
-REQUIRED_OAUTH_KEYS = (
-    "youtube_client_id",
-    "youtube_client_secret",
-    "youtube_refresh_token",
-)
-
-TOKEN_URL = "https://oauth2.googleapis.com/token"
-LIVE_BROADCASTS_URL = "https://www.googleapis.com/youtube/v3/liveBroadcasts"
-SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
-VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos"
-LIVE_CHAT_MESSAGES_URL = "https://www.googleapis.com/youtube/v3/liveChat/messages"
 
 DEFAULT_CONFIG = {
     "poll_interval_seconds": 15,
@@ -58,31 +36,21 @@ DEFAULT_CONFIG = {
     "speak_quiet_prompts": True,
 }
 
-SUMMARY_SYSTEM_PROMPT = """You are a Japanese live-stream cohost assistant.
-
-Speak to the streamer as an assistant, not as the streamer.
-Summarize recent live chat so the streamer can quickly understand what is happening.
-Use the live title and description as context, and prefer suggestions that fit the stream topic.
-Do not read every comment. Capture the main trend, questions, mood, and useful cue.
-Use phrases like "コメントでは", "今は", "この話題に触れるとよさそうです".
-Do not say lines that pretend to be the streamer, such as "僕は", "私は", "みんな", or direct audience greetings.
-Return only Japanese speech text. No markdown, no labels.
-Keep it natural and concise: 2 or 3 short sentences.
-Do not invent viewer counts, usernames, facts, sponsors, or promises.
-"""
-
-QUIET_SYSTEM_PROMPT = """You are a Japanese live-stream cohost assistant.
-
-Speak to the streamer as an assistant, not as the streamer.
-The live chat has been quiet. Suggest a warm, low-pressure topic the streamer could bring up.
-Use the live title and description as context, and avoid generic topics that ignore the stream topic.
-Use assistant-style guidance like "少し静かなので", "この話題を振ると反応しやすそうです".
-Do not produce a first-person line for the streamer to say directly.
-Return only Japanese speech text. No markdown, no labels.
-Keep it to 1 or 2 short sentences.
-Do not invent viewer counts, usernames, facts, sponsors, or promises.
-"""
-
+CONFIG_SETTING_NAMES = {
+    "video_id": "VIDEO_ID",
+    "channel_id": "CHANNEL_ID",
+    "live_chat_id": "LIVE_CHAT_ID",
+    "poll_interval_seconds": "POLL_INTERVAL_SECONDS",
+    "summary_interval_seconds": "SUMMARY_INTERVAL_SECONDS",
+    "quiet_after_seconds": "QUIET_AFTER_SECONDS",
+    "quiet_cooldown_seconds": "QUIET_COOLDOWN_SECONDS",
+    "min_messages_to_summarize": "MIN_MESSAGES_TO_SUMMARIZE",
+    "max_messages_per_summary": "MAX_MESSAGES_PER_SUMMARY",
+    "ignore_existing_messages_on_start": "IGNORE_EXISTING_MESSAGES_ON_START",
+    "speak_connection_status": "SPEAK_CONNECTION_STATUS",
+    "speak_summaries": "SPEAK_SUMMARIES",
+    "speak_quiet_prompts": "SPEAK_QUIET_PROMPTS",
+}
 
 class YoutubeLiveCompanionBackground(MatchingCapability):
     worker: AgentWorker = None
@@ -251,7 +219,7 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
         response = self.capability_worker.text_to_text_response(
             prompt,
             [],
-            system_prompt=SUMMARY_SYSTEM_PROMPT,
+            system_prompt=ability_config.SUMMARY_SYSTEM_PROMPT,
         )
         response = self._clean_response(response)
         if response:
@@ -278,7 +246,7 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
         response = self.capability_worker.text_to_text_response(
             prompt,
             [],
-            system_prompt=QUIET_SYSTEM_PROMPT,
+            system_prompt=ability_config.QUIET_SYSTEM_PROMPT,
         )
         response = self._clean_response(response)
         if response:
@@ -291,39 +259,20 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
         await self.capability_worker.speak(text)
 
     async def _load_config(self):
-        raw_config = "{}"
-        config_source = "defaults"
-
-        if await self.capability_worker.check_if_file_exists(CONFIG_FILE, False):
-            raw_config = await self.capability_worker.read_file(CONFIG_FILE, False)
-            config_source = "persistent"
-        elif await self.capability_worker.check_if_file_exists(CONFIG_FILE, True):
-            raw_config = await self.capability_worker.read_file(CONFIG_FILE, True)
-            config_source = "ability"
-
         self._logged_missing_config = False
-        config = json.loads(raw_config)
         merged = dict(DEFAULT_CONFIG)
-        merged.update(config)
-        self._normalize_config_credentials(merged)
-        third_party_keys = self._apply_third_party_api_keys(merged)
-        file_source = await self._apply_env_values(merged)
-        merged["config_source"] = config_source
-        merged["credential_source"] = self._credential_source(
-            merged, file_source, third_party_keys
-        )
+        merged.update(self._read_config_py_settings())
+        credential_source = self._apply_manual_credentials(merged)
+        merged["config_source"] = "config.py"
+        merged["credential_source"] = self._credential_source(merged, credential_source)
 
         if not self._has_oauth(merged) and not merged.get("api_key"):
             await self._write_state(
                 {
                     "status": "missing_config_values",
-                    "config_source": config_source,
+                    "config_source": "config.py",
                     "credential_source": "missing",
-                    "last_error": (
-                        "Set youtube_client_id, youtube_client_secret, "
-                        "and youtube_refresh_token in Third Party API Keys or youtube_live_companion_config.json. "
-                        "Private lives require OAuth."
-                    ),
+                    "last_error": ability_config.MISSING_CREDENTIALS_STATE_ERROR,
                     "updated_at_epoch": round(time.time()),
                 }
             )
@@ -331,104 +280,44 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
 
         return merged
 
-    def _apply_third_party_api_keys(self, config):
-        applied = set()
-        for config_key, api_key_name in THIRD_PARTY_API_KEY_NAMES.items():
-            if config.get(config_key):
-                continue
-            value = self._get_api_key(api_key_name)
-            if value:
-                config[config_key] = value
-                applied.add(config_key)
-
-        needs_public_api_key = (
-            not self._has_oauth(config)
-            and config.get("channel_id")
-            and not config.get("api_key")
-        )
-        if needs_public_api_key:
-            value = self._get_api_key("youtube_api_key")
-            if value:
-                config["api_key"] = value
-                applied.add("api_key")
-        return applied
-
-    async def _apply_env_values(self, config):
-        env_values, env_source = await self._read_env_values()
-        for config_key, env_name in FILE_CREDENTIAL_NAMES.items():
-            if config.get(config_key):
-                continue
-            value = env_values.get(env_name)
-            if value:
-                config[config_key] = value
-        return env_source
-
-    async def _read_env_values(self):
+    def _read_config_py_settings(self):
         values = {}
-        sources = []
-        for env_file in ENV_FILES:
-            if await self.capability_worker.check_if_file_exists(env_file, False):
-                text = await self.capability_worker.read_file(env_file, False)
-                parsed = self._non_empty_values(self._parse_env(text))
-                if parsed:
-                    values.update(parsed)
-                    sources.append(f"persistent {env_file}")
-            if await self.capability_worker.check_if_file_exists(env_file, True):
-                text = await self.capability_worker.read_file(env_file, True)
-                parsed = self._non_empty_values(self._parse_env(text))
-                if parsed:
-                    values.update(parsed)
-                    sources.append(f"ability {env_file}")
-        return values, ", ".join(sources)
-
-    def _normalize_config_credentials(self, config):
-        for output_key, aliases in CONFIG_CREDENTIAL_ALIASES.items():
-            if config.get(output_key):
-                continue
-            for alias in aliases:
-                value = config.get(alias)
-                if value:
-                    config[output_key] = str(value).strip()
-                    break
-
-    def _get_api_key(self, key_name):
-        try:
-            return self.capability_worker.get_api_keys(key_name)
-        except Exception as error:
-            self.worker.editor_logging_handler.info(
-                f"OpenHome API key {key_name} is unavailable: {error}"
-            )
-            return None
-
-    def _parse_env(self, text):
-        values = {}
-        for raw_line in (text or "").splitlines():
-            line = raw_line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            key = key.strip()
-            value = value.strip().strip('"').strip("'")
-            if key:
-                values[key] = value
+        for config_key, variable_name in CONFIG_SETTING_NAMES.items():
+            value = getattr(ability_config, variable_name, None)
+            if value is not None:
+                values[config_key] = value
         return values
 
-    def _non_empty_values(self, values):
-        return {key: value for key, value in values.items() if value}
+    def _apply_manual_credentials(self, config):
+        applied = []
+        for config_key, env_name in CREDENTIAL_NAMES.items():
+            if config.get(config_key):
+                continue
+            value, source = self._read_credential(env_name)
+            if value:
+                config[config_key] = value
+                applied.append(source)
+        return ", ".join(dict.fromkeys(applied))
 
-    def _credential_source(self, config, env_source, third_party_keys):
-        if all(
-            config_key in third_party_keys
-            for config_key in ("client_id", "client_secret", "refresh_token")
-        ):
-            return "Third Party API Keys"
-        if env_source and self._has_oauth(config):
-            return env_source
-        if self._has_oauth(config):
-            return CONFIG_FILE
-        if config.get("api_key"):
-            return "api_key"
-        return "mixed"
+    def _read_credential(self, env_name):
+        value = self._clean_credential_value(os.getenv(env_name))
+        if value:
+            return value, env_name
+        value = self._clean_credential_value(getattr(ability_config, env_name, ""))
+        if value:
+            return value, "config.py"
+        return "", ""
+
+    def _credential_source(self, config, credential_source):
+        if credential_source and (self._has_oauth(config) or config.get("api_key")):
+            return credential_source
+        return "config.py"
+
+    def _clean_credential_value(self, value):
+        value = str(value or "").strip()
+        if value in ability_config.PLACEHOLDER_VALUES:
+            return ""
+        return value
 
     async def _write_state(self, state):
         if await self.capability_worker.check_if_file_exists(STATE_FILE, False):
@@ -464,7 +353,7 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
 
     def _resolve_live_chat_from_owned_broadcast(self, config):
         data = self._youtube_get(
-            LIVE_BROADCASTS_URL,
+            ability_config.LIVE_BROADCASTS_URL,
             {
                 "part": "id,snippet,status",
                 "broadcastType": "all",
@@ -498,7 +387,7 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
 
     def _find_public_live_video_id(self, config):
         data = self._youtube_get(
-            SEARCH_URL,
+            ability_config.SEARCH_URL,
             {
                 "part": "snippet",
                 "channelId": config["channel_id"],
@@ -517,7 +406,7 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
 
     def _resolve_live_chat_from_video(self, config, video_id):
         data = self._youtube_get(
-            VIDEOS_URL,
+            ability_config.VIDEOS_URL,
             {
                 "part": "snippet,liveStreamingDetails",
                 "id": video_id,
@@ -547,7 +436,7 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
             params["pageToken"] = self._next_page_token
 
         return self._youtube_get(
-            LIVE_CHAT_MESSAGES_URL,
+            ability_config.LIVE_CHAT_MESSAGES_URL,
             params,
             config,
             auth_required=self._has_oauth(config),
@@ -601,7 +490,7 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
 
         try:
             payload = self._http_json(
-                TOKEN_URL,
+                ability_config.TOKEN_URL,
                 headers={
                     "Accept": "application/json",
                     "Content-Type": "application/x-www-form-urlencoded",
@@ -616,11 +505,7 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
             )
         except RuntimeError as error:
             raise RuntimeError(
-                "Google OAuth token refresh failed. Re-create youtube_refresh_token "
-                "with the same youtube_client_id and youtube_client_secret in OAuth Playground. "
-                "Also confirm the OAuth client is a Web application and the streaming Google "
-                "account is added as a test user. "
-                f"Original error: {error}"
+                ability_config.OAUTH_REFRESH_ERROR_TEMPLATE.format(error=error)
             )
         self._access_token = payload["access_token"]
         self._access_token_expires_at = now + int(payload.get("expires_in", 3600))
