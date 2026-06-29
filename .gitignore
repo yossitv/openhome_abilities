@@ -8,3 +8,7 @@ token.json
 **/token.json
 *.secret
 **/*.secret
+
+idea.md
+
+dist/
