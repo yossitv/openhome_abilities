@@ -86,9 +86,7 @@ class YoutubeLiveCompanionCapability(MatchingCapability):
             self.worker.editor_logging_handler.error(
                 f"YoutubeLiveCompanionCapability failed: {error}"
             )
-            await self.capability_worker.speak(
-                "YouTube 配信アシスタントの設定中にエラーが発生しました。"
-            )
+            await self.capability_worker.speak(self._speech("setup_error"))
         finally:
             self.capability_worker.resume_normal_flow()
 
@@ -102,16 +100,12 @@ class YoutubeLiveCompanionCapability(MatchingCapability):
             return
 
         await self.capability_worker.speak(
-            ability_config.MISSING_CREDENTIALS_SPEECH_TEMPLATE.format(
-                missing_keys=", ".join(missing_keys)
-            )
+            self._speech("missing_credentials", missing_keys=", ".join(missing_keys))
         )
 
     async def _speak_status(self):
         if not await self.capability_worker.check_if_file_exists(STATE_FILE, False):
-            await self.capability_worker.speak(
-                "まだ YouTube 配信アシスタントの状態は記録されていません。設定後、少し待ってからもう一度確認してください。"
-            )
+            await self.capability_worker.speak(self._speech("status_not_recorded"))
             return
 
         state = await self._read_state()
@@ -119,38 +113,52 @@ class YoutubeLiveCompanionCapability(MatchingCapability):
             return
 
         status = state.get("status") or "unknown"
-        config_source = state.get("config_source") or "未取得"
-        credential_source = state.get("credential_source") or "未取得"
-        live_title = state.get("live_title") or "未取得"
-        live_chat_id = state.get("live_chat_id") or "未取得"
+        unknown_value = self._speech("unknown_value")
+        config_source = state.get("config_source") or unknown_value
+        credential_source = state.get("credential_source") or unknown_value
+        live_title = state.get("live_title") or unknown_value
+        live_chat_id = state.get("live_chat_id") or unknown_value
         buffered_messages = state.get("buffered_messages")
         last_message_at = state.get("last_message_at_epoch")
         last_error = state.get("last_error")
 
         if last_error:
             await self.capability_worker.speak(
-                f"現在の状態は {status} です。設定元は {config_source}、認証情報は {credential_source} です。最後のエラーは {last_error} です。"
+                self._speech(
+                    "status_with_error",
+                    status=status,
+                    config_source=config_source,
+                    credential_source=credential_source,
+                    last_error=last_error,
+                )
             )
             return
 
-        message = (
-            f"現在の状態は {status} です。設定元は {config_source}、"
-            f"認証情報は {credential_source} です。対象ライブは {live_title}、"
-            f"ライブチャット ID は {live_chat_id} です。"
+        message = self._speech(
+            "status_base",
+            status=status,
+            config_source=config_source,
+            credential_source=credential_source,
+            live_title=live_title,
+            live_chat_id=live_chat_id,
         )
         if buffered_messages is not None:
-            message += f" 要約待ちの新着コメントは {buffered_messages} 件です。"
+            message += self._speech(
+                "status_buffered_messages",
+                buffered_messages=buffered_messages,
+            )
         if last_message_at:
             seconds_ago = max(0, round(time.time() - float(last_message_at)))
-            message += f" 最後の新着コメントは約 {seconds_ago} 秒前です。"
+            message += self._speech(
+                "status_last_message",
+                seconds_ago=seconds_ago,
+            )
 
         await self.capability_worker.speak(message)
 
     async def _speak_comment_summary(self):
         if not await self.capability_worker.check_if_file_exists(STATE_FILE, False):
-            await self.capability_worker.speak(
-                "まだライブチャットの状態が記録されていません。少し待ってからもう一度試してください。"
-            )
+            await self.capability_worker.speak(self._speech("summary_state_not_recorded"))
             return
 
         state = await self._read_state()
@@ -160,21 +168,17 @@ class YoutubeLiveCompanionCapability(MatchingCapability):
         last_error = state.get("last_error")
         if last_error:
             await self.capability_worker.speak(
-                f"ライブチャットの取得でエラーが出ています。最後のエラーは {last_error} です。"
+                self._speech("summary_error", last_error=last_error)
             )
             return
 
         if state.get("status") != "connected":
-            await self.capability_worker.speak(
-                "まだライブチャットに接続できていません。配信が開始されているか確認してください。"
-            )
+            await self.capability_worker.speak(self._speech("summary_not_connected"))
             return
 
         messages = state.get("recent_messages") or []
         if not messages:
-            await self.capability_worker.speak(
-                "まだ要約できる新着コメントがありません。ライブチャットに新しいコメントが来てからもう一度試してください。"
-            )
+            await self.capability_worker.speak(self._speech("summary_no_messages"))
             return
 
         prompt_lines = [
@@ -198,9 +202,7 @@ class YoutubeLiveCompanionCapability(MatchingCapability):
             await self.capability_worker.speak(response)
             return
 
-        await self.capability_worker.speak(
-            "コメント要約を作れませんでした。少し待ってからもう一度試してください。"
-        )
+        await self.capability_worker.speak(self._speech("summary_failed"))
 
     async def _reset_config(self):
         removed = False
@@ -210,13 +212,9 @@ class YoutubeLiveCompanionCapability(MatchingCapability):
                 removed = True
 
         if removed:
-            await self.capability_worker.speak(
-                "YouTube 配信アシスタントの状態を削除しました。"
-            )
+            await self.capability_worker.speak(self._speech("reset_removed"))
         else:
-            await self.capability_worker.speak(
-                "削除する永続状態はありませんでした。config.py の設定は手動で編集してください。"
-            )
+            await self.capability_worker.speak(self._speech("reset_nothing"))
 
     def _normalize(self, text):
         if not text:
@@ -228,9 +226,7 @@ class YoutubeLiveCompanionCapability(MatchingCapability):
         try:
             return json.loads(state_text)
         except (TypeError, ValueError):
-            await self.capability_worker.speak(
-                "状態ファイルを読み取れませんでした。Background Daemon のログを確認してください。"
-            )
+            await self.capability_worker.speak(self._speech("state_read_failed"))
             return None
 
     async def _missing_credentials(self):
@@ -245,7 +241,7 @@ class YoutubeLiveCompanionCapability(MatchingCapability):
             missing.append(env_name)
 
         if missing:
-            return missing, "未設定"
+            return missing, self._speech("missing_value")
 
         return [], credential_source or "config.py"
 
@@ -290,6 +286,9 @@ class YoutubeLiveCompanionCapability(MatchingCapability):
         if not response:
             return ""
         return response.strip().strip("`").strip()
+
+    def _speech(self, message_key, **values):
+        return ability_config.format_speech_message(message_key, **values)
 
     def call(self, worker: AgentWorker):
         self.worker = worker

@@ -269,7 +269,9 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
                     "status": "missing_config_values",
                     "config_source": "config.py",
                     "credential_source": "missing",
-                    "last_error": ability_config.MISSING_CREDENTIALS_STATE_ERROR,
+                    "last_error": ability_config.format_speech_message(
+                        "missing_credentials_state_error"
+                    ),
                     "updated_at_epoch": round(time.time()),
                 }
             )
@@ -426,7 +428,10 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
             )
         except RuntimeError as error:
             raise RuntimeError(
-                ability_config.OAUTH_REFRESH_ERROR_TEMPLATE.format(error=error)
+                ability_config.format_speech_message(
+                    "oauth_refresh_error",
+                    error=error,
+                )
             )
         self._access_token = payload["access_token"]
         self._access_token_expires_at = now + int(payload.get("expires_in", 3600))
