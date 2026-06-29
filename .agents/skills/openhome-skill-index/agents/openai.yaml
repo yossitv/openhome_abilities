@@ -1,0 +1,4 @@
+interface:
+  display_name: "OpenHome Skill Index"
+  short_description: "Index OpenHome skills and references"
+  default_prompt: "Use $openhome-skill-index to find the right OpenHome skill and reference path."
