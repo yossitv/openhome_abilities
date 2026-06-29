@@ -82,7 +82,7 @@ you two live summary
 
 `status` 単体は他の Ability や通常会話に取られやすいので、トリガーワードとしては推奨しません。
 
-## トリガーと反応
+## トリガー対応表
 
 OpenHome Dashboard には上の推奨トリガーワードを登録します。Ability 起動後、`main.py` は発話内容を次の順で判定します。
 
@@ -92,13 +92,14 @@ reset -> summary -> status -> setup/default
 
 どれにも明確に当たらない場合は `setup` 扱いになります。そのため、`youtube` 単体で起動した場合も設定確認として処理されます。
 
-| 目的 | 反応する発話例 | 実際の反応 |
-| --- | --- | --- |
-| 設定確認 | `youtube`, `youtube live setup`, `youtube setup`, `配信設定`, `youtube設定`, `設定`, `設定確認` | `main.py` の OAuth 3 値が入っているか確認します。揃っていれば editor log に `YouTube credentials are available from main.py...` を出し、会話では基本的に読み上げません。不足していれば不足キーを読み上げます。 |
-| 状態確認 | `youtube live status`, `youtube status`, `you tube live status`, `you two live status`, `u two live status`, `配信ステータス`, `ライブステータス`, `状態確認`, `ライブの状態`, `状態`, `ステータス`, `接続` | `youtube_live_companion_state.json` を読み、現在の状態、設定元、認証情報の取得元、対象ライブ、live chat ID、最後のエラー、要約待ちコメント数などを読み上げます。 |
-| コメント要約 | `youtube live summary`, `youtube summary`, `you tube live summary`, `you two live summary`, `u two live summary`, `comment summary`, `chat summary`, `コメント要約`, `コメントまとめ`, `チャット要約`, `チャットまとめ`, `要約`, `まとめ` | background daemon が保存した直近コメントを、ライブタイトル・説明欄と合わせて要約します。未接続、エラー、コメントなしの場合はその状態を読み上げます。 |
-| 状態リセット | `youtube live reset`, `youtube reset`, `配信設定リセット`, `設定リセット`, `reset`, `リセット` | 保存済みの `youtube_live_companion_state.json` を削除します。`main.py` / `background.py` に入れた OAuth 値は変更しません。 |
-| 常駐監視 | 発話トリガーではなく、Ability の `Background Daemon` 設定で起動 | `background.py` が自動で起動し、`YouTube live companion watcher started` をログに出します。OAuth で自分のアクティブな YouTube Live を探し、見つかれば live chat を監視して state を更新します。配信中でない場合は `waiting_for_active_live` になります。 |
+| Dashboard に登録するトリガー | コードが拾う表現 | 判定 intent | 呼ばれる処理 | ユーザーに見える反応 |
+| --- | --- | --- | --- | --- |
+| `youtube` | どの intent にも当たらない発話 | `setup` | `main.py` の `_save_config_from_user()` | `main.py` の OAuth 3 値を確認します。揃っていれば editor log に `YouTube credentials are available from main.py...` を出し、会話では基本的に読み上げません。不足していれば不足キーを読み上げます。 |
+| `youtube live setup`, `配信設定` | `youtube setup`, `youtube設定`, `設定`, `設定確認` | `setup` | `main.py` の `_save_config_from_user()` | `youtube` 単体と同じく、`main.py` 側の認証情報が入っているか確認します。YouTube への実接続は `background.py` が担当します。 |
+| `youtube live status`, `youtube status`, `u two live status`, `you two live status`, `配信ステータス`, `ライブステータス` | `you tube live status`, `状態確認`, `ライブの状態`, `状態`, `ステータス`, `接続` | `status` | `main.py` の `_speak_status()` | `youtube_live_companion_state.json` を読み、現在の状態、設定元、認証情報の取得元、対象ライブ、live chat ID、最後のエラー、要約待ちコメント数などを読み上げます。 |
+| `youtube live summary`, `youtube summary`, `u two live summary`, `you two live summary`, `コメント要約`, `コメントまとめ`, `チャット要約`, `チャットまとめ` | `you tube live summary`, `comment summary`, `chat summary`, `要約`, `まとめ` | `summary` | `main.py` の `_speak_comment_summary()` | `background.py` が保存した直近コメントを、ライブタイトル・説明欄と合わせて要約します。未接続、エラー、コメントなしの場合はその状態を読み上げます。 |
+| `設定リセット` | `youtube live reset`, `youtube reset`, `配信設定リセット`, `reset`, `リセット` | `reset` | `main.py` の `_reset_config()` | 保存済みの `youtube_live_companion_state.json` を削除します。`main.py` / `background.py` に入れた OAuth 値は変更しません。 |
+| 発話トリガーなし | Ability の `Background Daemon` 設定で自動起動 | 常駐処理 | `background.py` の `watch_live_chat()` | `YouTube live companion watcher started` をログに出し、OAuth で自分のアクティブな YouTube Live を探します。見つかれば live chat を監視して state を更新し、配信中でない場合は `waiting_for_active_live` になります。 |
 
 ## OAuth で必要な値
 
