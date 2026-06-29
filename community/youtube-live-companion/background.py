@@ -219,7 +219,7 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
         response = self.capability_worker.text_to_text_response(
             prompt,
             [],
-            system_prompt=ability_config.SUMMARY_SYSTEM_PROMPT,
+            system_prompt=ability_config.get_summary_system_prompt(),
         )
         response = self._clean_response(response)
         if response:
@@ -246,7 +246,7 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
         response = self.capability_worker.text_to_text_response(
             prompt,
             [],
-            system_prompt=ability_config.QUIET_SYSTEM_PROMPT,
+            system_prompt=ability_config.get_quiet_system_prompt(),
         )
         response = self._clean_response(response)
         if response:
