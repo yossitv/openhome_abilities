@@ -10,7 +10,7 @@ Use this skill to turn an OpenHome Ability idea into a repo-ready ability folder
 ## Workflow
 
 1. Inspect the target repo before editing:
-   - In `openhome_abilities`, check `abilities/`, `docs/README.md`, and `scripts/package-abilities.sh` when relevant.
+   - In `openhome_abilities`, check `abilities/`, `.agents/skills/openhome-ability-builder/references/openhome-ability-reference.md`, and `scripts/package-abilities.sh` when relevant.
    - Preserve existing user changes and repo-specific naming.
 2. Classify the ability before writing code:
    - `Skill`: user-invoked, one-shot behavior.
