@@ -1,0 +1,4 @@
+interface:
+  display_name: "OpenHome Skill Checker"
+  short_description: "Check OpenHome abilities before PR"
+  default_prompt: "Use $openhome-skill-checker to check an OpenHome ability before opening a PR."
