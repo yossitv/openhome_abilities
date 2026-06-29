@@ -1,0 +1,4 @@
+interface:
+  display_name: "OpenHome Ability Publisher"
+  short_description: "Prepare OpenHome community PRs safely"
+  default_prompt: "Use $openhome-ability-publisher to check an OpenHome ability and prepare a community PR."
