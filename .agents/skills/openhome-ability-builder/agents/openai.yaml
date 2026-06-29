@@ -1,0 +1,4 @@
+interface:
+  display_name: "OpenHome Ability Builder"
+  short_description: "Scaffold and validate OpenHome abilities"
+  default_prompt: "Use $openhome-ability-builder to create and package a new OpenHome ability."
