@@ -1,8 +1,5 @@
 import json
-import os
 import time
-
-import config as ability_config
 
 from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
@@ -11,15 +8,160 @@ from src.main import AgentWorker
 
 STATE_FILE = "youtube_live_companion_state.json"
 
-# YouTube OAuth is not currently integrated with OpenHome Linked Accounts.
-# This Ability version uses manual credentials in config.py as a temporary
-# workaround. OS environment variables with the same names override config.py.
+# YouTube OAuth setup is handled outside this public Ability package.
+# Keep committed values as placeholders. OpenHome operators can replace these
+# constants in their private runtime copy when manual OAuth credentials are used.
 # Do not commit real client secrets or refresh tokens.
+YOUTUBE_CLIENT_ID = "YOUR_YOUTUBE_CLIENT_ID"
+YOUTUBE_CLIENT_SECRET = "YOUR_YOUTUBE_CLIENT_SECRET"
+YOUTUBE_REFRESH_TOKEN = "YOUR_YOUTUBE_REFRESH_TOKEN"
+ASSISTANT_LANGUAGE = "ja"
+
 CREDENTIAL_NAMES = (
     "YOUTUBE_CLIENT_ID",
     "YOUTUBE_CLIENT_SECRET",
     "YOUTUBE_REFRESH_TOKEN",
 )
+
+PLACEHOLDER_VALUES = {
+    "",
+    "YOUR_YOUTUBE_CLIENT_ID",
+    "your_youtube_client_id_here",
+    "YOUR_YOUTUBE_CLIENT_SECRET",
+    "your_youtube_client_secret_here",
+    "YOUR_YOUTUBE_REFRESH_TOKEN",
+    "your_youtube_refresh_token_here",
+}
+
+LANGUAGE_ALIASES = {
+    "ja": "ja",
+    "jp": "ja",
+    "japanese": "ja",
+    "日本語": "ja",
+    "en": "en",
+    "english": "en",
+    "英語": "en",
+}
+
+SUMMARY_SYSTEM_PROMPTS = {
+    "ja": """You are a Japanese live-stream cohost assistant.
+
+Speak to the streamer as an assistant, not as the streamer.
+Summarize recent live chat so the streamer can quickly understand what is happening.
+Use the live title and description as context, and prefer suggestions that fit the stream topic.
+Do not read every comment. Capture the main trend, questions, mood, and useful cue.
+Use phrases like "コメントでは", "今は", "この話題に触れるとよさそうです".
+Do not say lines that pretend to be the streamer, such as "僕は", "私は", "みんな", or direct audience greetings.
+Return only Japanese speech text. No markdown, no labels.
+Keep it natural and concise: 2 or 3 short sentences.
+Do not invent viewer counts, usernames, facts, sponsors, or promises.
+""",
+    "en": """You are an English live-stream cohost assistant.
+
+Speak to the streamer as an assistant, not as the streamer.
+Summarize recent live chat so the streamer can quickly understand what is happening.
+Use the live title and description as context, and prefer suggestions that fit the stream topic.
+Do not read every comment. Capture the main trend, questions, mood, and useful cue.
+Use phrases like "In the chat", "Right now", or "It may be good to mention".
+Do not say lines that pretend to be the streamer, such as "I", "we", "everyone", or direct audience greetings.
+Return only English speech text. No markdown, no labels.
+Keep it natural and concise: 2 or 3 short sentences.
+Do not invent viewer counts, usernames, facts, sponsors, or promises.
+""",
+}
+
+MAIN_SPEECH_MESSAGES = {
+    "ja": {
+        "setup_error": "YouTube 配信アシスタントの設定中にエラーが発生しました。",
+        "missing_credentials": (
+            "YouTube の認証情報がまだ足りません。不足しているキーは {missing_keys} です。"
+            "OpenHome 側の OAuth 設定または Ability runtime の認証情報を確認してください。"
+        ),
+        "status_not_recorded": (
+            "まだ YouTube 配信アシスタントの状態は記録されていません。"
+            "設定後、少し待ってからもう一度確認してください。"
+        ),
+        "status_with_error": (
+            "現在の状態は {status} です。設定元は {config_source}、"
+            "認証情報は {credential_source} です。最後のエラーは {last_error} です。"
+        ),
+        "status_base": (
+            "現在の状態は {status} です。設定元は {config_source}、"
+            "認証情報は {credential_source} です。対象ライブは {live_title}、"
+            "ライブチャット ID は {live_chat_id} です。"
+        ),
+        "status_buffered_messages": " 要約待ちの新着コメントは {buffered_messages} 件です。",
+        "status_last_message": " 最後の新着コメントは約 {seconds_ago} 秒前です。",
+        "summary_state_not_recorded": (
+            "まだライブチャットの状態が記録されていません。少し待ってからもう一度試してください。"
+        ),
+        "summary_error": "ライブチャットの取得でエラーが出ています。最後のエラーは {last_error} です。",
+        "summary_not_connected": "まだライブチャットに接続できていません。配信が開始されているか確認してください。",
+        "summary_no_messages": (
+            "まだ要約できる新着コメントがありません。ライブチャットに新しいコメントが来てからもう一度試してください。"
+        ),
+        "summary_failed": "コメント要約を作れませんでした。少し待ってからもう一度試してください。",
+        "reset_removed": "YouTube 配信アシスタントの状態を削除しました。",
+        "reset_nothing": "削除する永続状態はありませんでした。OAuth 設定は OpenHome 側の管理設定を確認してください。",
+        "state_read_failed": "状態ファイルを読み取れませんでした。Background Daemon のログを確認してください。",
+        "unknown_value": "未取得",
+        "missing_value": "未設定",
+    },
+    "en": {
+        "setup_error": "An error occurred while setting up the YouTube Live assistant.",
+        "missing_credentials": (
+            "YouTube credentials are still missing. Missing keys: {missing_keys}. "
+            "Check the OpenHome OAuth setup or the Ability runtime credentials."
+        ),
+        "status_not_recorded": (
+            "The YouTube Live assistant has not recorded any state yet. "
+            "After setup, wait a moment and check again."
+        ),
+        "status_with_error": (
+            "The current status is {status}. The config source is {config_source}, "
+            "and the credential source is {credential_source}. The last error is {last_error}."
+        ),
+        "status_base": (
+            "The current status is {status}. The config source is {config_source}, "
+            "and the credential source is {credential_source}. The target live stream is "
+            "{live_title}, and the live chat ID is {live_chat_id}."
+        ),
+        "status_buffered_messages": " There are {buffered_messages} new comments waiting for summary.",
+        "status_last_message": " The last new comment arrived about {seconds_ago} seconds ago.",
+        "summary_state_not_recorded": (
+            "The live chat state has not been recorded yet. Wait a moment and try again."
+        ),
+        "summary_error": "Live chat retrieval has an error. The last error is {last_error}.",
+        "summary_not_connected": "The assistant is not connected to live chat yet. Check whether the stream has started.",
+        "summary_no_messages": (
+            "There are no new comments to summarize yet. Try again after new live chat messages arrive."
+        ),
+        "summary_failed": "I could not create a comment summary. Wait a moment and try again.",
+        "reset_removed": "The YouTube Live assistant state has been deleted.",
+        "reset_nothing": "There was no saved state to delete. Check the OpenHome-managed OAuth setup for credential changes.",
+        "state_read_failed": "The state file could not be read. Check the Background Daemon logs.",
+        "unknown_value": "not available",
+        "missing_value": "not set",
+    },
+}
+
+
+def get_assistant_language():
+    language = str(ASSISTANT_LANGUAGE or "ja").strip().lower()
+    return LANGUAGE_ALIASES.get(language, "ja")
+
+
+def get_summary_system_prompt():
+    return SUMMARY_SYSTEM_PROMPTS[get_assistant_language()]
+
+
+def get_speech_message(message_key):
+    messages = MAIN_SPEECH_MESSAGES[get_assistant_language()]
+    return messages.get(message_key, MAIN_SPEECH_MESSAGES["ja"][message_key])
+
+
+def format_speech_message(message_key, **values):
+    return get_speech_message(message_key).format(**values)
 
 SETUP_WORDS = {
     "youtube live setup",
@@ -62,6 +204,46 @@ RESET_WORDS = {
     "reset",
 }
 
+SUMMARY_PATTERNS = (
+    "youtube live summary",
+    "youtube summary",
+    "comment summary",
+    "chat summary",
+    "コメント要約",
+    "コメントまとめ",
+    "チャット要約",
+    "チャットまとめ",
+    "要約",
+    "まとめ",
+)
+
+STATUS_PATTERNS = (
+    "youtube live status",
+    "youtube status",
+    "配信ステータス",
+    "ライブステータス",
+    "ライブの状態",
+    "状態",
+    "ステータス",
+    "接続",
+)
+
+SETUP_PATTERNS = (
+    "youtube live setup",
+    "youtube setup",
+    "youtube設定",
+    "配信設定",
+    "設定確認",
+)
+
+RESET_PATTERNS = (
+    "youtube live reset",
+    "youtube reset",
+    "配信設定リセット",
+    "設定リセット",
+    "リセット",
+)
+
 
 class YoutubeLiveCompanionCapability(MatchingCapability):
     worker: AgentWorker = None
@@ -73,12 +255,13 @@ class YoutubeLiveCompanionCapability(MatchingCapability):
         try:
             request_text = await self.capability_worker.wait_for_complete_transcription()
             request_text = self._normalize(request_text)
+            intent = self._intent_for_text(request_text)
 
-            if self._matches(request_text, SUMMARY_WORDS):
+            if intent == "summary":
                 await self._speak_comment_summary()
-            elif self._matches(request_text, STATUS_WORDS):
+            elif intent == "status":
                 await self._speak_status()
-            elif self._matches(request_text, RESET_WORDS):
+            elif intent == "reset":
                 await self._reset_config()
             else:
                 await self._save_config_from_user()
@@ -195,7 +378,7 @@ class YoutubeLiveCompanionCapability(MatchingCapability):
         response = self.capability_worker.text_to_text_response(
             prompt,
             [],
-            system_prompt=ability_config.get_summary_system_prompt(),
+            system_prompt=get_summary_system_prompt(),
         )
         response = self._clean_response(response)
         if response:
@@ -231,50 +414,77 @@ class YoutubeLiveCompanionCapability(MatchingCapability):
 
     async def _missing_credentials(self):
         credential_values, credential_source = self._read_manual_credentials()
-        if all(credential_values.get(env_name) for env_name in CREDENTIAL_NAMES):
-            return [], credential_source or "config.py"
+        if all(credential_values.get(config_name) for config_name in CREDENTIAL_NAMES):
+            return [], credential_source or "main.py"
 
         missing = []
-        for env_name in CREDENTIAL_NAMES:
-            if credential_values.get(env_name):
+        for config_name in CREDENTIAL_NAMES:
+            if credential_values.get(config_name):
                 continue
-            missing.append(env_name)
+            missing.append(config_name)
 
         if missing:
             return missing, self._speech("missing_value")
 
-        return [], credential_source or "config.py"
+        return [], credential_source or "main.py"
 
     def _read_manual_credentials(self):
         values = {}
         sources = []
-        for env_name in CREDENTIAL_NAMES:
-            value = self._read_credential(env_name)
+        for config_name in CREDENTIAL_NAMES:
+            value = self._read_credential(config_name)
             if value:
-                values[env_name] = value
-                sources.append(self._credential_source_label(env_name))
+                values[config_name] = value
+                sources.append(self._credential_source_label(config_name))
         return values, ", ".join(dict.fromkeys(sources))
 
-    def _read_credential(self, env_name):
-        value = self._clean_credential_value(os.getenv(env_name))
-        if value:
-            return value
-        return self._clean_credential_value(getattr(ability_config, env_name, ""))
+    def _read_credential(self, config_name):
+        if config_name == "YOUTUBE_CLIENT_ID":
+            return self._clean_credential_value(YOUTUBE_CLIENT_ID)
+        if config_name == "YOUTUBE_CLIENT_SECRET":
+            return self._clean_credential_value(YOUTUBE_CLIENT_SECRET)
+        if config_name == "YOUTUBE_REFRESH_TOKEN":
+            return self._clean_credential_value(YOUTUBE_REFRESH_TOKEN)
+        return ""
 
-    def _credential_source_label(self, env_name):
-        if self._clean_credential_value(os.getenv(env_name)):
-            return env_name
-        return "config.py"
+    def _credential_source_label(self, config_name):
+        return "main.py"
 
     def _clean_credential_value(self, value):
         value = str(value or "").strip()
-        if value in ability_config.PLACEHOLDER_VALUES:
+        if value in PLACEHOLDER_VALUES:
             return ""
         return value
 
     def _matches(self, text, words):
         lowered = text.lower().strip(" 　。、,.!?！？")
         return lowered in {word.lower() for word in words}
+
+    def _intent_for_text(self, text):
+        lowered = self._match_text(text)
+        if self._matches(text, RESET_WORDS) or self._contains_any(
+            lowered, RESET_PATTERNS
+        ):
+            return "reset"
+        if self._matches(text, SUMMARY_WORDS) or self._contains_any(
+            lowered, SUMMARY_PATTERNS
+        ):
+            return "summary"
+        if self._matches(text, STATUS_WORDS) or self._contains_any(
+            lowered, STATUS_PATTERNS
+        ):
+            return "status"
+        if self._matches(text, SETUP_WORDS) or self._contains_any(
+            lowered, SETUP_PATTERNS
+        ):
+            return "setup"
+        return "setup"
+
+    def _match_text(self, text):
+        return self._normalize(text).lower().strip(" 　。、,.!?！？")
+
+    def _contains_any(self, text, patterns):
+        return any(pattern.lower() in text for pattern in patterns)
 
     def _truncate_text(self, text, max_length):
         text = " ".join((text or "").split())
@@ -288,7 +498,7 @@ class YoutubeLiveCompanionCapability(MatchingCapability):
         return response.strip().strip("`").strip()
 
     def _speech(self, message_key, **values):
-        return ability_config.format_speech_message(message_key, **values)
+        return format_speech_message(message_key, **values)
 
     def call(self, worker: AgentWorker):
         self.worker = worker

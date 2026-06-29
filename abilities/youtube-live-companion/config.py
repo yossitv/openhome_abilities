@@ -1,8 +1,15 @@
 # YouTube OAuth is not currently integrated with OpenHome Linked Accounts.
 # This Ability version uses manual credentials as a temporary workaround.
-# Replace these placeholders only in your local OpenHome Ability editor.
-# Do not commit real client secrets or refresh tokens to GitHub.
-
+#
+# OpenHome Cloud / Ability Editor reads these values directly from config.py.
+# Keep committed values as placeholders. Replace them only in your private
+# OpenHome Ability Editor copy.
+#
+# Local development note:
+# Do not read environment variables in this file. Local tests may load .env
+# and patch these module values from the test harness, but the uploaded Ability
+# should use config.py as the source of truth.
+#
 # Required for private or unlisted YouTube Live streams.
 YOUTUBE_CLIENT_ID = "YOUR_YOUTUBE_CLIENT_ID"
 YOUTUBE_CLIENT_SECRET = "YOUR_YOUTUBE_CLIENT_SECRET"

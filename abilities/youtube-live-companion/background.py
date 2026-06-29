@@ -1,9 +1,8 @@
+import asyncio
 import json
-import os
 import time
 
 import requests
-import config as ability_config
 
 from src.agent.capability import MatchingCapability
 from src.agent.capability_worker import CapabilityWorker
@@ -11,42 +10,168 @@ from src.main import AgentWorker
 
 
 STATE_FILE = "youtube_live_companion_state.json"
+LIVE_CHAT_UNAVAILABLE_STATUS_CODES = {400, 403, 404, 410}
+AUTHENTICATION_STATUS_CODES = {401}
 
-# YouTube OAuth is not currently integrated with OpenHome Linked Accounts.
-# This Ability version uses manual credentials in config.py as a temporary
-# workaround. OS environment variables with the same names override config.py.
+# YouTube OAuth setup is handled outside this public Ability package.
+# Keep committed values as placeholders. OpenHome operators can replace these
+# constants in their private runtime copy when manual OAuth credentials are used.
 # Do not commit real client secrets or refresh tokens.
+YOUTUBE_CLIENT_ID = "YOUR_YOUTUBE_CLIENT_ID"
+YOUTUBE_CLIENT_SECRET = "YOUR_YOUTUBE_CLIENT_SECRET"
+YOUTUBE_REFRESH_TOKEN = "YOUR_YOUTUBE_REFRESH_TOKEN"
+ASSISTANT_LANGUAGE = "ja"
+
 CREDENTIAL_NAMES = {
     "client_id": "YOUTUBE_CLIENT_ID",
     "client_secret": "YOUTUBE_CLIENT_SECRET",
     "refresh_token": "YOUTUBE_REFRESH_TOKEN",
 }
 
-DEFAULT_CONFIG = {
-    "poll_interval_seconds": 15,
-    "summary_interval_seconds": 60,
-    "quiet_after_seconds": 120,
-    "quiet_cooldown_seconds": 180,
-    "min_messages_to_summarize": 3,
-    "max_messages_per_summary": 12,
-    "ignore_existing_messages_on_start": True,
-    "speak_connection_status": True,
-    "speak_summaries": True,
-    "speak_quiet_prompts": True,
+POLL_INTERVAL_SECONDS = 15
+SUMMARY_INTERVAL_SECONDS = 60
+QUIET_AFTER_SECONDS = 120
+QUIET_COOLDOWN_SECONDS = 180
+MIN_MESSAGES_TO_SUMMARIZE = 3
+MAX_MESSAGES_PER_SUMMARY = 12
+IGNORE_EXISTING_MESSAGES_ON_START = True
+SPEAK_CONNECTION_STATUS = True
+SPEAK_SUMMARIES = True
+SPEAK_QUIET_PROMPTS = True
+
+GOOGLE_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token"
+LIVE_BROADCASTS_URL = "https://www.googleapis.com/youtube/v3/liveBroadcasts"
+LIVE_CHAT_MESSAGES_URL = "https://www.googleapis.com/youtube/v3/liveChat/messages"
+
+PLACEHOLDER_VALUES = {
+    "",
+    "YOUR_YOUTUBE_CLIENT_ID",
+    "your_youtube_client_id_here",
+    "YOUR_YOUTUBE_CLIENT_SECRET",
+    "your_youtube_client_secret_here",
+    "YOUR_YOUTUBE_REFRESH_TOKEN",
+    "your_youtube_refresh_token_here",
 }
 
-CONFIG_SETTING_NAMES = {
-    "poll_interval_seconds": "POLL_INTERVAL_SECONDS",
-    "summary_interval_seconds": "SUMMARY_INTERVAL_SECONDS",
-    "quiet_after_seconds": "QUIET_AFTER_SECONDS",
-    "quiet_cooldown_seconds": "QUIET_COOLDOWN_SECONDS",
-    "min_messages_to_summarize": "MIN_MESSAGES_TO_SUMMARIZE",
-    "max_messages_per_summary": "MAX_MESSAGES_PER_SUMMARY",
-    "ignore_existing_messages_on_start": "IGNORE_EXISTING_MESSAGES_ON_START",
-    "speak_connection_status": "SPEAK_CONNECTION_STATUS",
-    "speak_summaries": "SPEAK_SUMMARIES",
-    "speak_quiet_prompts": "SPEAK_QUIET_PROMPTS",
+LANGUAGE_ALIASES = {
+    "ja": "ja",
+    "jp": "ja",
+    "japanese": "ja",
+    "日本語": "ja",
+    "en": "en",
+    "english": "en",
+    "英語": "en",
 }
+
+SUMMARY_SYSTEM_PROMPTS = {
+    "ja": """You are a Japanese live-stream cohost assistant.
+
+Speak to the streamer as an assistant, not as the streamer.
+Summarize recent live chat so the streamer can quickly understand what is happening.
+Use the live title and description as context, and prefer suggestions that fit the stream topic.
+Do not read every comment. Capture the main trend, questions, mood, and useful cue.
+Use phrases like "コメントでは", "今は", "この話題に触れるとよさそうです".
+Do not say lines that pretend to be the streamer, such as "僕は", "私は", "みんな", or direct audience greetings.
+Return only Japanese speech text. No markdown, no labels.
+Keep it natural and concise: 2 or 3 short sentences.
+Do not invent viewer counts, usernames, facts, sponsors, or promises.
+""",
+    "en": """You are an English live-stream cohost assistant.
+
+Speak to the streamer as an assistant, not as the streamer.
+Summarize recent live chat so the streamer can quickly understand what is happening.
+Use the live title and description as context, and prefer suggestions that fit the stream topic.
+Do not read every comment. Capture the main trend, questions, mood, and useful cue.
+Use phrases like "In the chat", "Right now", or "It may be good to mention".
+Do not say lines that pretend to be the streamer, such as "I", "we", "everyone", or direct audience greetings.
+Return only English speech text. No markdown, no labels.
+Keep it natural and concise: 2 or 3 short sentences.
+Do not invent viewer counts, usernames, facts, sponsors, or promises.
+""",
+}
+
+QUIET_SYSTEM_PROMPTS = {
+    "ja": """You are a Japanese live-stream cohost assistant.
+
+Speak to the streamer as an assistant, not as the streamer.
+The live chat has been quiet. Suggest a warm, low-pressure topic the streamer could bring up.
+Use the live title and description as context, and avoid generic topics that ignore the stream topic.
+Use assistant-style guidance like "少し静かなので", "この話題を振ると反応しやすそうです".
+Do not produce a first-person line for the streamer to say directly.
+Return only Japanese speech text. No markdown, no labels.
+Keep it to 1 or 2 short sentences.
+Do not invent viewer counts, usernames, facts, sponsors, or promises.
+""",
+    "en": """You are an English live-stream cohost assistant.
+
+Speak to the streamer as an assistant, not as the streamer.
+The live chat has been quiet. Suggest a warm, low-pressure topic the streamer could bring up.
+Use the live title and description as context, and avoid generic topics that ignore the stream topic.
+Use assistant-style guidance like "The chat is a little quiet" or "This topic may invite responses".
+Do not produce a first-person line for the streamer to say directly.
+Return only English speech text. No markdown, no labels.
+Keep it to 1 or 2 short sentences.
+Do not invent viewer counts, usernames, facts, sponsors, or promises.
+""",
+}
+
+BACKGROUND_SPEECH_MESSAGES = {
+    "ja": {
+        "missing_credentials_state_error": (
+            "YouTube OAuth 認証情報がまだ runtime に設定されていません。"
+            "OpenHome 側の OAuth 設定または Ability runtime の認証情報を確認してください。"
+        ),
+        "oauth_refresh_error": (
+            "Google OAuth token refresh failed. Confirm the OpenHome-managed OAuth "
+            "setup or refresh the manual runtime credentials. Original error: {error}"
+        ),
+    },
+    "en": {
+        "missing_credentials_state_error": (
+            "YouTube OAuth credentials are not configured in the runtime yet. "
+            "Check the OpenHome OAuth setup or the Ability runtime credentials."
+        ),
+        "oauth_refresh_error": (
+            "Google OAuth token refresh failed. Confirm the OpenHome-managed OAuth "
+            "setup or refresh the manual runtime credentials. Original error: {error}"
+        ),
+    },
+}
+
+DEFAULT_CONFIG = {
+    "poll_interval_seconds": POLL_INTERVAL_SECONDS,
+    "summary_interval_seconds": SUMMARY_INTERVAL_SECONDS,
+    "quiet_after_seconds": QUIET_AFTER_SECONDS,
+    "quiet_cooldown_seconds": QUIET_COOLDOWN_SECONDS,
+    "min_messages_to_summarize": MIN_MESSAGES_TO_SUMMARIZE,
+    "max_messages_per_summary": MAX_MESSAGES_PER_SUMMARY,
+    "ignore_existing_messages_on_start": IGNORE_EXISTING_MESSAGES_ON_START,
+    "speak_connection_status": SPEAK_CONNECTION_STATUS,
+    "speak_summaries": SPEAK_SUMMARIES,
+    "speak_quiet_prompts": SPEAK_QUIET_PROMPTS,
+}
+
+
+def get_assistant_language():
+    language = str(ASSISTANT_LANGUAGE or "ja").strip().lower()
+    return LANGUAGE_ALIASES.get(language, "ja")
+
+
+def get_summary_system_prompt():
+    return SUMMARY_SYSTEM_PROMPTS[get_assistant_language()]
+
+
+def get_quiet_system_prompt():
+    return QUIET_SYSTEM_PROMPTS[get_assistant_language()]
+
+
+def get_background_speech_message(message_key):
+    messages = BACKGROUND_SPEECH_MESSAGES[get_assistant_language()]
+    return messages.get(message_key, BACKGROUND_SPEECH_MESSAGES["ja"][message_key])
+
+
+def format_background_speech_message(message_key, **values):
+    return get_background_speech_message(message_key).format(**values)
 
 
 class YoutubeLiveCompanionBackground(MatchingCapability):
@@ -69,7 +194,6 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
     _recent_messages = None
     _seen_message_ids = None
     _announced_connection = False
-    _logged_missing_config = False
 
     #{{register capability}}
 
@@ -92,59 +216,21 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
                 self.worker.editor_logging_handler.error(
                     f"YouTube live companion watcher failed: {error}"
                 )
-                await self._write_state(
-                    {
-                        "status": "error",
-                        "last_error": str(error),
-                        "updated_at_epoch": round(time.time()),
-                    }
-                )
+                await self._write_state(self._error_state(error))
                 await self.worker.session_tasks.sleep(30.0)
 
     async def _tick(self, config):
         self._next_sleep_seconds = float(config["poll_interval_seconds"])
 
         if not self._live_chat_id:
-            live = self._resolve_live_chat_from_owned_broadcast(config)
+            live = await self._resolve_live_chat_from_owned_broadcast(config)
             if not live:
-                await self._write_state(
-                    {
-                        "status": "waiting_for_active_live",
-                        "config_source": config.get("config_source"),
-                        "credential_source": config.get("credential_source"),
-                        "live_chat_id": "",
-                        "live_title": "",
-                        "live_description": "",
-                        "recent_messages": [],
-                        "recent_messages_count": 0,
-                        "last_error": None,
-                        "updated_at_epoch": round(time.time()),
-                    }
-                )
+                await self._write_state(self._waiting_state(config))
                 return
 
-            self._live_chat_id = live["live_chat_id"]
-            self._live_title = live.get("live_title") or "YouTube Live"
-            self._live_description = live.get("live_description") or ""
-            self._recent_messages = []
-            self._chat_initialized = False
-            self._next_page_token = ""
-            self._last_message_at = time.time()
+            self._remember_live_chat(live)
 
-            await self._write_state(
-                {
-                    "status": "connected",
-                    "config_source": config.get("config_source"),
-                    "credential_source": config.get("credential_source"),
-                    "live_chat_id": self._live_chat_id,
-                    "live_title": self._live_title,
-                    "live_description": self._truncate_text(self._live_description, 500),
-                    "recent_messages": [],
-                    "recent_messages_count": 0,
-                    "last_error": None,
-                    "updated_at_epoch": round(time.time()),
-                }
-            )
+            await self._write_state(self._connected_state(config))
 
             if config["speak_connection_status"] and not self._announced_connection:
                 await self._speak(
@@ -152,8 +238,29 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
                 )
                 self._announced_connection = True
 
-        messages_response = self._list_live_chat_messages(config, self._live_chat_id)
-        self._next_page_token = messages_response.get("nextPageToken") or self._next_page_token
+        try:
+            messages_response = await self._list_live_chat_messages(
+                config, self._live_chat_id
+            )
+        except YouTubeApiError as error:
+            if self._is_live_chat_unavailable(error):
+                self.worker.editor_logging_handler.info(
+                    "YouTube live chat became unavailable; resetting chat state"
+                )
+                self._reset_live_chat_state()
+                await self._write_state(
+                    self._waiting_state(
+                        config,
+                        last_error=str(error),
+                        error_type="live_chat_unavailable",
+                    )
+                )
+                return
+            raise
+
+        self._next_page_token = (
+            messages_response.get("nextPageToken") or self._next_page_token
+        )
 
         polling_interval = messages_response.get("pollingIntervalMillis")
         if polling_interval:
@@ -177,23 +284,7 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
         await self._maybe_summarize(config)
         await self._maybe_prompt_when_quiet(config)
 
-        await self._write_state(
-            {
-                "status": "connected",
-                "config_source": config.get("config_source"),
-                "credential_source": config.get("credential_source"),
-                "live_chat_id": self._live_chat_id,
-                "live_title": self._live_title,
-                "live_description": self._truncate_text(self._live_description, 500),
-                "buffered_messages": len(self._message_buffer),
-                "recent_messages": self._messages_for_state(config),
-                "recent_messages_count": len(self._recent_messages),
-                "last_message_at_epoch": round(self._last_message_at),
-                "next_sleep_seconds": self._next_sleep_seconds,
-                "last_error": None,
-                "updated_at_epoch": round(time.time()),
-            }
-        )
+        await self._write_state(self._connected_state(config))
 
     async def _maybe_summarize(self, config):
         now = time.time()
@@ -216,7 +307,7 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
         response = self.capability_worker.text_to_text_response(
             prompt,
             [],
-            system_prompt=ability_config.get_summary_system_prompt(),
+            system_prompt=get_summary_system_prompt(),
         )
         response = self._clean_response(response)
         if response:
@@ -243,7 +334,7 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
         response = self.capability_worker.text_to_text_response(
             prompt,
             [],
-            system_prompt=ability_config.get_quiet_system_prompt(),
+            system_prompt=get_quiet_system_prompt(),
         )
         response = self._clean_response(response)
         if response:
@@ -256,20 +347,19 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
         await self.capability_worker.speak(text)
 
     async def _load_config(self):
-        self._logged_missing_config = False
         merged = dict(DEFAULT_CONFIG)
         merged.update(self._read_config_py_settings())
         credential_source = self._apply_manual_credentials(merged)
-        merged["config_source"] = "config.py"
+        merged["config_source"] = "background.py"
         merged["credential_source"] = self._credential_source(merged, credential_source)
 
         if not self._has_oauth(merged):
             await self._write_state(
                 {
                     "status": "missing_config_values",
-                    "config_source": "config.py",
+                    "config_source": "background.py",
                     "credential_source": "missing",
-                    "last_error": ability_config.format_speech_message(
+                    "last_error": format_background_speech_message(
                         "missing_credentials_state_error"
                     ),
                     "updated_at_epoch": round(time.time()),
@@ -280,56 +370,76 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
         return merged
 
     def _read_config_py_settings(self):
-        values = {}
-        for config_key, variable_name in CONFIG_SETTING_NAMES.items():
-            value = getattr(ability_config, variable_name, None)
-            if value is not None:
-                values[config_key] = value
-        return values
+        return {
+            "poll_interval_seconds": POLL_INTERVAL_SECONDS,
+            "summary_interval_seconds": SUMMARY_INTERVAL_SECONDS,
+            "quiet_after_seconds": QUIET_AFTER_SECONDS,
+            "quiet_cooldown_seconds": QUIET_COOLDOWN_SECONDS,
+            "min_messages_to_summarize": MIN_MESSAGES_TO_SUMMARIZE,
+            "max_messages_per_summary": MAX_MESSAGES_PER_SUMMARY,
+            "ignore_existing_messages_on_start": (
+                IGNORE_EXISTING_MESSAGES_ON_START
+            ),
+            "speak_connection_status": SPEAK_CONNECTION_STATUS,
+            "speak_summaries": SPEAK_SUMMARIES,
+            "speak_quiet_prompts": SPEAK_QUIET_PROMPTS,
+        }
 
     def _apply_manual_credentials(self, config):
         applied = []
-        for config_key, env_name in CREDENTIAL_NAMES.items():
+        for config_key, variable_name in CREDENTIAL_NAMES.items():
             if config.get(config_key):
                 continue
-            value, source = self._read_credential(env_name)
+            value, source = self._read_credential(variable_name)
             if value:
                 config[config_key] = value
                 applied.append(source)
         return ", ".join(dict.fromkeys(applied))
 
-    def _read_credential(self, env_name):
-        value = self._clean_credential_value(os.getenv(env_name))
+    def _read_credential(self, variable_name):
+        value = ""
+        if variable_name == "YOUTUBE_CLIENT_ID":
+            value = YOUTUBE_CLIENT_ID
+        elif variable_name == "YOUTUBE_CLIENT_SECRET":
+            value = YOUTUBE_CLIENT_SECRET
+        elif variable_name == "YOUTUBE_REFRESH_TOKEN":
+            value = YOUTUBE_REFRESH_TOKEN
+
+        value = self._clean_credential_value(value)
         if value:
-            return value, env_name
-        value = self._clean_credential_value(getattr(ability_config, env_name, ""))
-        if value:
-            return value, "config.py"
+            return value, "background.py"
         return "", ""
 
     def _credential_source(self, config, credential_source):
         if credential_source and self._has_oauth(config):
             return credential_source
-        return "config.py"
+        return "background.py"
 
     def _clean_credential_value(self, value):
         value = str(value or "").strip()
-        if value in ability_config.PLACEHOLDER_VALUES:
+        if value in PLACEHOLDER_VALUES:
             return ""
         return value
 
     async def _write_state(self, state):
+        content = json.dumps(state, ensure_ascii=False, indent=2)
+        try:
+            await self.capability_worker.write_file(STATE_FILE, content, False, "w")
+            return
+        except TypeError:
+            pass
+
         if await self.capability_worker.check_if_file_exists(STATE_FILE, False):
             await self.capability_worker.delete_file(STATE_FILE, False)
         await self.capability_worker.write_file(
             STATE_FILE,
-            json.dumps(state, ensure_ascii=False, indent=2),
+            content,
             False,
         )
 
-    def _resolve_live_chat_from_owned_broadcast(self, config):
-        data = self._youtube_get(
-            ability_config.LIVE_BROADCASTS_URL,
+    async def _resolve_live_chat_from_owned_broadcast(self, config):
+        data = await self._youtube_get(
+            LIVE_BROADCASTS_URL,
             {
                 "part": "id,snippet,status",
                 "broadcastType": "all",
@@ -356,7 +466,7 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
                 }
         return None
 
-    def _list_live_chat_messages(self, config, live_chat_id):
+    async def _list_live_chat_messages(self, config, live_chat_id):
         params = {
             "liveChatId": live_chat_id,
             "part": "snippet,authorDetails",
@@ -365,8 +475,8 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
         if self._next_page_token:
             params["pageToken"] = self._next_page_token
 
-        return self._youtube_get(
-            ability_config.LIVE_CHAT_MESSAGES_URL,
+        return await self._youtube_get(
+            LIVE_CHAT_MESSAGES_URL,
             params,
             config,
         )
@@ -397,23 +507,23 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
 
         return new_messages
 
-    def _youtube_get(self, url, params, config):
+    async def _youtube_get(self, url, params, config):
         request_params = dict(params)
         headers = {
             "Accept": "application/json",
-            "Authorization": f"Bearer {self._get_access_token(config)}",
+            "Authorization": f"Bearer {await self._get_access_token(config)}",
         }
 
-        return self._http_json(url, headers=headers, params=request_params)
+        return await self._http_json(url, headers=headers, params=request_params)
 
-    def _get_access_token(self, config):
+    async def _get_access_token(self, config):
         now = time.time()
         if self._access_token and now < self._access_token_expires_at - 60:
             return self._access_token
 
         try:
-            payload = self._http_json(
-                ability_config.GOOGLE_OAUTH_TOKEN_URL,
+            payload = await self._http_json(
+                GOOGLE_OAUTH_TOKEN_URL,
                 headers={
                     "Accept": "application/json",
                     "Content-Type": "application/x-www-form-urlencoded",
@@ -426,32 +536,71 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
                     "grant_type": "refresh_token",
                 },
             )
-        except RuntimeError as error:
-            raise RuntimeError(
-                ability_config.format_speech_message(
+        except YouTubeApiError as error:
+            raise OAuthRefreshError(
+                format_background_speech_message(
                     "oauth_refresh_error",
                     error=error,
                 )
+            ) from error
+
+        self._access_token = (
+            payload.get("access_token") if isinstance(payload, dict) else ""
+        )
+        if not self._access_token:
+            raise OAuthRefreshError(
+                "Google OAuth token refresh returned no access token"
             )
-        self._access_token = payload["access_token"]
         self._access_token_expires_at = now + int(payload.get("expires_in", 3600))
         return self._access_token
 
-    def _http_json(self, url, headers=None, method="GET", data=None, params=None):
-        response = requests.request(
-            method,
+    async def _http_json(
+        self, url, headers=None, method="GET", data=None, params=None
+    ):
+        return await asyncio.to_thread(
+            self._http_json_sync,
             url,
-            headers=headers or {"Accept": "application/json"},
+            headers=headers,
+            method=method,
             data=data,
             params=params,
-            timeout=12,
         )
+
+    def _http_json_sync(
+        self, url, headers=None, method="GET", data=None, params=None
+    ):
+        try:
+            response = requests.request(
+                method,
+                url,
+                headers=headers or {"Accept": "application/json"},
+                data=data,
+                params=params,
+                timeout=12,
+            )
+        except requests.exceptions.Timeout as error:
+            raise YouTubeApiError(
+                None,
+                f"YouTube API request timed out: {error}",
+                error_type="transient_api_error",
+            ) from error
+        except requests.exceptions.RequestException as error:
+            raise YouTubeApiError(
+                None,
+                f"YouTube API request failed: {error}",
+                error_type="transient_api_error",
+            ) from error
+
         if response.status_code >= 400:
-            raise RuntimeError(f"YouTube API HTTP {response.status_code}: {response.text}")
+            raise YouTubeApiError(response.status_code, response.text)
         try:
             return response.json()
         except ValueError as error:
-            raise RuntimeError(f"YouTube API returned invalid JSON: {error}")
+            raise YouTubeApiError(
+                response.status_code,
+                f"YouTube API returned invalid JSON: {error}",
+                error_type="invalid_json",
+            ) from error
 
     def _has_oauth(self, config):
         return bool(
@@ -459,6 +608,88 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
             and config.get("client_secret")
             and config.get("refresh_token")
         )
+
+    def _remember_live_chat(self, live):
+        self._live_chat_id = live["live_chat_id"]
+        self._live_title = live.get("live_title") or "YouTube Live"
+        self._live_description = live.get("live_description") or ""
+        self._recent_messages = []
+        self._message_buffer = []
+        self._seen_message_ids = []
+        self._chat_initialized = False
+        self._next_page_token = ""
+        self._last_message_at = time.time()
+
+    def _reset_live_chat_state(self):
+        self._live_chat_id = ""
+        self._live_title = ""
+        self._live_description = ""
+        self._next_page_token = ""
+        self._chat_initialized = False
+        self._last_message_at = 0
+        self._message_buffer = []
+        self._recent_messages = []
+        self._seen_message_ids = []
+        self._announced_connection = False
+
+    def _is_live_chat_unavailable(self, error):
+        return error.status_code in LIVE_CHAT_UNAVAILABLE_STATUS_CODES
+
+    def _waiting_state(self, config, last_error=None, error_type=None):
+        return {
+            "status": "waiting_for_active_live",
+            "config_source": config.get("config_source"),
+            "credential_source": config.get("credential_source"),
+            "live_chat_id": "",
+            "live_title": "",
+            "live_description": "",
+            "recent_messages": [],
+            "recent_messages_count": 0,
+            "last_error": last_error,
+            "error_type": error_type,
+            "updated_at_epoch": round(time.time()),
+        }
+
+    def _connected_state(self, config):
+        return {
+            "status": "connected",
+            "config_source": config.get("config_source"),
+            "credential_source": config.get("credential_source"),
+            "live_chat_id": self._live_chat_id,
+            "live_title": self._live_title,
+            "live_description": self._truncate_text(self._live_description, 500),
+            "buffered_messages": len(self._message_buffer or []),
+            "recent_messages": self._messages_for_state(config),
+            "recent_messages_count": len(self._recent_messages or []),
+            "last_message_at_epoch": round(self._last_message_at),
+            "next_sleep_seconds": self._next_sleep_seconds,
+            "last_error": None,
+            "error_type": None,
+            "updated_at_epoch": round(time.time()),
+        }
+
+    def _error_state(self, error):
+        status = "error"
+        error_type = "unexpected_error"
+        if isinstance(error, OAuthRefreshError):
+            status = "authentication_error"
+            error_type = "oauth_refresh_error"
+        elif isinstance(error, YouTubeApiError):
+            error_type = error.error_type
+            if error.status_code in AUTHENTICATION_STATUS_CODES:
+                status = "authentication_error"
+                error_type = "youtube_authentication_error"
+            else:
+                status = "api_error"
+
+        return {
+            "status": status,
+            "live_chat_id": self._live_chat_id,
+            "live_title": self._live_title,
+            "last_error": str(error),
+            "error_type": error_type,
+            "updated_at_epoch": round(time.time()),
+        }
 
     def _live_context_prompt(self):
         description = self._truncate_text(self._live_description, 1200)
@@ -494,3 +725,17 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
         self.background_daemon_mode = background_daemon_mode
         self.capability_worker = CapabilityWorker(self)
         self.worker.session_tasks.create(self.watch_live_chat())
+
+
+class YouTubeApiError(RuntimeError):
+    def __init__(self, status_code, message, error_type="api_error"):
+        self.status_code = status_code
+        self.error_type = error_type
+        if status_code is None:
+            super().__init__(message)
+        else:
+            super().__init__(f"YouTube API HTTP {status_code}: {message}")
+
+
+class OAuthRefreshError(RuntimeError):
+    pass
