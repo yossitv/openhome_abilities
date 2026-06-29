@@ -226,7 +226,7 @@ def format_speech_message(message_key, **values):
     return get_speech_message(message_key).format(**values)
 
 
-# Advanced YouTube API endpoints. Normally do not change these.
-TOKEN_URL = "https://oauth2.googleapis.com/token"
+# Advanced API endpoints. Normally do not change these.
+GOOGLE_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token"
 LIVE_BROADCASTS_URL = "https://www.googleapis.com/youtube/v3/liveBroadcasts"
 LIVE_CHAT_MESSAGES_URL = "https://www.googleapis.com/youtube/v3/liveChat/messages"

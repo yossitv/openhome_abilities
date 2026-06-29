@@ -413,7 +413,7 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
 
         try:
             payload = self._http_json(
-                ability_config.TOKEN_URL,
+                ability_config.GOOGLE_OAUTH_TOKEN_URL,
                 headers={
                     "Accept": "application/json",
                     "Content-Type": "application/x-www-form-urlencoded",

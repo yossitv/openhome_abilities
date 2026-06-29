@@ -93,22 +93,18 @@ README.md
 main.py
 ```
 
-zip を作り直す場合は、`abilities` ディレクトリ側から `simple-hello` フォルダごと圧縮します。
+zip を作り直す場合は、リポジトリ直下の package script を使います。
 
 ```bash
-cd /Users/ys/Documents/GitHub/openhome_abilities/abilities
-zip -r ../dist/simple-hello.zip simple-hello
+cd /Users/ys/Documents/GitHub/openhome_abilities
+./scripts/package-abilities.sh simple-hello
 ```
 
 ### 2. アイコン画像を用意する
 
-OpenHome の Ability には dashboard / marketplace 表示用の画像を設定できます。今回生成したアイコンは次の場所にあります。
+OpenHome の Ability には dashboard / marketplace 表示用の画像を設定できます。`simple-hello` は動作確認用の最小 Ability なので、専用アイコンは同梱していません。必要なら任意の PNG / JPEG を用意して、Ability 作成画面の `Image` に指定してください。
 
-```text
-dist/simple-hello-icon.png
-```
-
-Ability 作成画面の `Image` にこの画像を指定します。
+`YouTube Live Companion` のアイコンは `abilities/youtube-live-companion/icon.png` にあります。
 
 ### 3. OpenHome に Ability をアップロードする
 
@@ -127,7 +123,7 @@ Web dashboard から作る場合の流れです。
 | Name | `Simple Hello` |
 | Description | `簡易的な動作確認用 Ability` |
 | Category | `Skill` |
-| Image | `dist/simple-hello-icon.png` |
+| Image | 任意の PNG / JPEG |
 | Trigger Words | `simple hello`, `hello ability`, `テスト ability`, `簡易 ability` |
 
 `Skill` は、ユーザーが trigger word を話したときに一回実行され、処理後に通常の Personality flow へ戻る Ability です。今回の `simple-hello` は動作確認用なので `Skill` を選びます。
