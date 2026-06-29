@@ -93,10 +93,10 @@ README.md
 main.py
 ```
 
-zip を作り直す場合は、`community` ディレクトリ側から `simple-hello` フォルダごと圧縮します。
+zip を作り直す場合は、`abilities` ディレクトリ側から `simple-hello` フォルダごと圧縮します。
 
 ```bash
-cd /Users/ys/Documents/GitHub/openhome_abilities/community
+cd /Users/ys/Documents/GitHub/openhome_abilities/abilities
 zip -r ../dist/simple-hello.zip simple-hello
 ```
 

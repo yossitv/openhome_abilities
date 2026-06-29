@@ -12,17 +12,10 @@ from src.main import AgentWorker
 STATE_FILE = "youtube_live_companion_state.json"
 
 # YouTube OAuth is not currently integrated with OpenHome Linked Accounts.
-# This community version uses manual credentials in config.py as a temporary
+# This Ability version uses manual credentials in config.py as a temporary
 # workaround. OS environment variables with the same names override config.py.
-# Do not commit real API keys, client secrets, or refresh tokens.
+# Do not commit real client secrets or refresh tokens.
 CREDENTIAL_NAMES = (
-    ("YOUTUBE_CLIENT_ID", "client_id"),
-    ("YOUTUBE_CLIENT_SECRET", "client_secret"),
-    ("YOUTUBE_REFRESH_TOKEN", "refresh_token"),
-    ("YOUTUBE_API_KEY", "api_key"),
-)
-
-REQUIRED_OAUTH_ENV_NAMES = (
     "YOUTUBE_CLIENT_ID",
     "YOUTUBE_CLIENT_SECRET",
     "YOUTUBE_REFRESH_TOKEN",
@@ -68,6 +61,7 @@ RESET_WORDS = {
     "設定リセット",
     "reset",
 }
+
 
 class YoutubeLiveCompanionCapability(MatchingCapability):
     worker: AgentWorker = None
@@ -241,11 +235,11 @@ class YoutubeLiveCompanionCapability(MatchingCapability):
 
     async def _missing_credentials(self):
         credential_values, credential_source = self._read_manual_credentials()
-        if all(credential_values.get(env_name) for env_name in REQUIRED_OAUTH_ENV_NAMES):
+        if all(credential_values.get(env_name) for env_name in CREDENTIAL_NAMES):
             return [], credential_source or "config.py"
 
         missing = []
-        for env_name in REQUIRED_OAUTH_ENV_NAMES:
+        for env_name in CREDENTIAL_NAMES:
             if credential_values.get(env_name):
                 continue
             missing.append(env_name)
@@ -258,7 +252,7 @@ class YoutubeLiveCompanionCapability(MatchingCapability):
     def _read_manual_credentials(self):
         values = {}
         sources = []
-        for env_name, _config_key in CREDENTIAL_NAMES:
+        for env_name in CREDENTIAL_NAMES:
             value = self._read_credential(env_name)
             if value:
                 values[env_name] = value

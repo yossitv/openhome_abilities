@@ -13,14 +13,13 @@ from src.main import AgentWorker
 STATE_FILE = "youtube_live_companion_state.json"
 
 # YouTube OAuth is not currently integrated with OpenHome Linked Accounts.
-# This community version uses manual credentials in config.py as a temporary
+# This Ability version uses manual credentials in config.py as a temporary
 # workaround. OS environment variables with the same names override config.py.
-# Do not commit real API keys, client secrets, or refresh tokens.
+# Do not commit real client secrets or refresh tokens.
 CREDENTIAL_NAMES = {
     "client_id": "YOUTUBE_CLIENT_ID",
     "client_secret": "YOUTUBE_CLIENT_SECRET",
     "refresh_token": "YOUTUBE_REFRESH_TOKEN",
-    "api_key": "YOUTUBE_API_KEY",
 }
 
 DEFAULT_CONFIG = {
@@ -37,9 +36,6 @@ DEFAULT_CONFIG = {
 }
 
 CONFIG_SETTING_NAMES = {
-    "video_id": "VIDEO_ID",
-    "channel_id": "CHANNEL_ID",
-    "live_chat_id": "LIVE_CHAT_ID",
     "poll_interval_seconds": "POLL_INTERVAL_SECONDS",
     "summary_interval_seconds": "SUMMARY_INTERVAL_SECONDS",
     "quiet_after_seconds": "QUIET_AFTER_SECONDS",
@@ -51,6 +47,7 @@ CONFIG_SETTING_NAMES = {
     "speak_summaries": "SPEAK_SUMMARIES",
     "speak_quiet_prompts": "SPEAK_QUIET_PROMPTS",
 }
+
 
 class YoutubeLiveCompanionBackground(MatchingCapability):
     worker: AgentWorker = None
@@ -108,7 +105,7 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
         self._next_sleep_seconds = float(config["poll_interval_seconds"])
 
         if not self._live_chat_id:
-            live = self._resolve_live_chat(config)
+            live = self._resolve_live_chat_from_owned_broadcast(config)
             if not live:
                 await self._write_state(
                     {
@@ -266,7 +263,7 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
         merged["config_source"] = "config.py"
         merged["credential_source"] = self._credential_source(merged, credential_source)
 
-        if not self._has_oauth(merged) and not merged.get("api_key"):
+        if not self._has_oauth(merged):
             await self._write_state(
                 {
                     "status": "missing_config_values",
@@ -309,7 +306,7 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
         return "", ""
 
     def _credential_source(self, config, credential_source):
-        if credential_source and (self._has_oauth(config) or config.get("api_key")):
+        if credential_source and self._has_oauth(config):
             return credential_source
         return "config.py"
 
@@ -328,29 +325,6 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
             False,
         )
 
-    def _resolve_live_chat(self, config):
-        if config.get("live_chat_id"):
-            return {
-                "live_chat_id": config["live_chat_id"],
-                "live_title": config.get("live_title") or "YouTube Live",
-                "live_description": config.get("live_description") or "",
-            }
-
-        if config.get("video_id"):
-            return self._resolve_live_chat_from_video(config, config["video_id"])
-
-        if self._has_oauth(config):
-            live = self._resolve_live_chat_from_owned_broadcast(config)
-            if live:
-                return live
-
-        if config.get("api_key") and config.get("channel_id"):
-            video_id = self._find_public_live_video_id(config)
-            if video_id:
-                return self._resolve_live_chat_from_video(config, video_id)
-
-        return None
-
     def _resolve_live_chat_from_owned_broadcast(self, config):
         data = self._youtube_get(
             ability_config.LIVE_BROADCASTS_URL,
@@ -361,64 +335,18 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
                 "mine": "true",
             },
             config,
-            auth_required=True,
         )
-        return self._live_chat_from_broadcasts(data.get("items", []), active_only=True)
+        return self._live_chat_from_broadcasts(data.get("items", []))
 
-    def _live_chat_from_broadcasts(self, items, active_only):
-        fallback = None
+    def _live_chat_from_broadcasts(self, items):
         for item in items:
             snippet = item.get("snippet") or {}
             status = item.get("status") or {}
-            if active_only and status.get("lifeCycleStatus") != "live":
+            if status.get("lifeCycleStatus") != "live":
                 continue
 
             live_chat_id = snippet.get("liveChatId")
             if live_chat_id:
-                live = {
-                    "live_chat_id": live_chat_id,
-                    "live_title": snippet.get("title") or "YouTube Live",
-                    "live_description": snippet.get("description") or "",
-                }
-                if status.get("lifeCycleStatus") == "live":
-                    return live
-                fallback = fallback or live
-        return fallback
-
-    def _find_public_live_video_id(self, config):
-        data = self._youtube_get(
-            ability_config.SEARCH_URL,
-            {
-                "part": "snippet",
-                "channelId": config["channel_id"],
-                "eventType": "live",
-                "type": "video",
-                "maxResults": "1",
-            },
-            config,
-            auth_required=False,
-        )
-        for item in data.get("items", []):
-            video_id = (item.get("id") or {}).get("videoId")
-            if video_id:
-                return video_id
-        return None
-
-    def _resolve_live_chat_from_video(self, config, video_id):
-        data = self._youtube_get(
-            ability_config.VIDEOS_URL,
-            {
-                "part": "snippet,liveStreamingDetails",
-                "id": video_id,
-            },
-            config,
-            auth_required=self._has_oauth(config),
-        )
-        for item in data.get("items", []):
-            details = item.get("liveStreamingDetails") or {}
-            live_chat_id = details.get("activeLiveChatId")
-            if live_chat_id:
-                snippet = item.get("snippet") or {}
                 return {
                     "live_chat_id": live_chat_id,
                     "live_title": snippet.get("title") or "YouTube Live",
@@ -439,7 +367,6 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
             ability_config.LIVE_CHAT_MESSAGES_URL,
             params,
             config,
-            auth_required=self._has_oauth(config),
         )
 
     def _extract_new_messages(self, messages_response):
@@ -468,18 +395,12 @@ class YoutubeLiveCompanionBackground(MatchingCapability):
 
         return new_messages
 
-    def _youtube_get(self, url, params, config, auth_required):
+    def _youtube_get(self, url, params, config):
         request_params = dict(params)
-        headers = {"Accept": "application/json"}
-
-        if auth_required:
-            headers["Authorization"] = f"Bearer {self._get_access_token(config)}"
-        elif config.get("api_key"):
-            request_params["key"] = config["api_key"]
-        elif self._has_oauth(config):
-            headers["Authorization"] = f"Bearer {self._get_access_token(config)}"
-        else:
-            raise ValueError("YouTube API key or OAuth config is required")
+        headers = {
+            "Accept": "application/json",
+            "Authorization": f"Bearer {self._get_access_token(config)}",
+        }
 
         return self._http_json(url, headers=headers, params=request_params)
 

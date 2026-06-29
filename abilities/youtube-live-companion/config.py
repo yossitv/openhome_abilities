@@ -1,36 +1,16 @@
 # YouTube OAuth is not currently integrated with OpenHome Linked Accounts.
-# This community version uses manual credentials as a temporary workaround.
+# This Ability version uses manual credentials as a temporary workaround.
 # Replace these placeholders only in your local OpenHome Ability editor.
-# Do not commit real API keys, client secrets, or refresh tokens to GitHub.
+# Do not commit real client secrets or refresh tokens to GitHub.
 
 # Required for private or unlisted YouTube Live streams.
 YOUTUBE_CLIENT_ID = "YOUR_YOUTUBE_CLIENT_ID"
 YOUTUBE_CLIENT_SECRET = "YOUR_YOUTUBE_CLIENT_SECRET"
 YOUTUBE_REFRESH_TOKEN = "YOUR_YOUTUBE_REFRESH_TOKEN"
 
-# Optional. Used for public channel lookup only.
-YOUTUBE_API_KEY = "YOUR_YOUTUBE_API_KEY"
-
-# Values in this set are examples, not usable credentials. main.py and
-# background.py treat them as empty so placeholders are never sent to YouTube.
-PLACEHOLDER_VALUES = {
-    "",
-    "YOUR_YOUTUBE_API_KEY",
-    "your_youtube_api_key_here",
-    "YOUR_YOUTUBE_CLIENT_ID",
-    "your_youtube_client_id_here",
-    "YOUR_YOUTUBE_CLIENT_SECRET",
-    "your_youtube_client_secret_here",
-    "YOUR_YOUTUBE_REFRESH_TOKEN",
-    "your_youtube_refresh_token_here",
-}
-
-# Optional direct targeting. Leave blank to auto-detect your active live
-# broadcast through OAuth.
-VIDEO_ID = ""
-CHANNEL_ID = ""
-LIVE_CHAT_ID = ""
-
+# Output language for generated comment summaries and quiet prompts.
+# Supported values: "ja", "日本語", "en", or "english".
+ASSISTANT_LANGUAGE = "ja"
 
 # Polling and assistant behavior.
 POLL_INTERVAL_SECONDS = 15
@@ -44,9 +24,20 @@ SPEAK_CONNECTION_STATUS = True
 SPEAK_SUMMARIES = True
 SPEAK_QUIET_PROMPTS = True
 
-# Output language for generated comment summaries and quiet prompts.
-# Supported values: "ja", "日本語", "en", or "english".
-ASSISTANT_LANGUAGE = "ja"
+# -- Do not edit below this line. --
+
+# Values in this set are examples, not usable credentials. main.py and
+# background.py treat them as empty so placeholders are never sent to YouTube.
+PLACEHOLDER_VALUES = {
+    "",
+    "YOUR_YOUTUBE_CLIENT_ID",
+    "your_youtube_client_id_here",
+    "YOUR_YOUTUBE_CLIENT_SECRET",
+    "your_youtube_client_secret_here",
+    "YOUR_YOUTUBE_REFRESH_TOKEN",
+    "your_youtube_refresh_token_here",
+}
+
 
 LANGUAGE_ALIASES = {
     "ja": "ja",
@@ -134,8 +125,7 @@ MISSING_CREDENTIALS_SPEECH_TEMPLATE = (
 
 MISSING_CREDENTIALS_STATE_ERROR = (
     "Set YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, and YOUTUBE_REFRESH_TOKEN "
-    "in config.py. Private or unlisted lives require OAuth. Public channel "
-    "lookup can also use YOUTUBE_API_KEY with CHANNEL_ID."
+    "in config.py. YouTube Live tracking uses OAuth credentials."
 )
 
 OAUTH_REFRESH_ERROR_TEMPLATE = (
@@ -149,6 +139,4 @@ OAUTH_REFRESH_ERROR_TEMPLATE = (
 # Advanced YouTube API endpoints. Normally do not change these.
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 LIVE_BROADCASTS_URL = "https://www.googleapis.com/youtube/v3/liveBroadcasts"
-SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
-VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos"
 LIVE_CHAT_MESSAGES_URL = "https://www.googleapis.com/youtube/v3/liveChat/messages"
